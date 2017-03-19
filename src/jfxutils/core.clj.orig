@@ -1,0 +1,99 @@
+(ns jfxutils.core
+  (:import [javafx.application Application]
+           [javafx.event ActionEvent EventHandler]
+<<<<<<< HEAD
+           [javafx.stage Stage StageBuilder])
+  )
+
+(defonce force-toolkit-init (javafx.embed.swing.JFXPanel.))
+
+=======
+           [javafx.stage Stage StageBuilder]
+           [javafx.scene.paint LinearGradient RadialGradient ImagePattern CycleMethod Stop]))
+
+(defonce force-toolkit-init (javafx.embed.swing.JFXPanel.))
+
+
+(defn classpath []
+  (doseq [cp (seq (.getURLs (java.lang.ClassLoader/getSystemClassLoader)))]
+    (println cp)))
+
+;; This prevents thread from finishing when last window closes and
+;; allows restarting of application
+  (javafx.application.Platform/setImplicitExit false)
+
+>>>>>>> 97d462c498f3d72d168f1c49eab9a5a9577fbde5
+(defn run-later* [f]
+  (javafx.application.Platform/runLater f))
+
+(defmacro run-later [& body]
+  `(run-later* (fn [] ~@body)))
+
+(defn run-now* [f]
+  (let [result (promise)]
+    (run-later
+     (deliver result (try (f) (catch Throwable e e))))
+    @result))
+
+(defmacro run-now [& body]
+  `(run-now* (fn [] ~@body)))
+
+(defn event-handler* [f]
+  (reify javafx.event.EventHandler
+    (handle [this e] (f e))))
+
+(defmacro event-handler [arg & body]
+  `(event-handler* (fn ~arg ~@body)))
+<<<<<<< HEAD
+=======
+
+
+(defmacro jcvargs
+  "Apply args to Java constructor.  This just wraps the first argument
+in parentheses and doesn't check whether it's actually a Java
+constructor, so you can actually pass any function or method with a
+list of arguments.
+
+If the last argument is any sort of collection, it gets passed to
+to-array.  If it does not eval to an actual vector, list, etc., the
+macro will fail.
+
+If you want to force the type of array that gets created, use
+  jcvargst."
+  [method & args]
+  (if (coll? (last args))
+    `(~method ~@(butlast args) (into-array ~(last args)))
+    `(~method ~@args)))
+
+(defmacro jcvargst 
+    "Apply args to Java constructor.  This just wraps the 
+first argument in parenthese and doesn't check whether 
+it's actually a Java constructor, so you can actually pass
+any function or method with a list of arguments.
+
+The last argument is passed to to-array with type specified 
+by the previous argument.  If the last argument 
+is an expression that doesn't eval to a collection, the macro will fail.
+
+See jcvargs for simpler method."
+    [method & args]
+    (if (coll? (last args))
+      (let [blargs (butlast args)]
+        `(~method ~@(butlast blargs) (into-array ~(last blargs)  ~(last args))))
+      `(~method ~@args)))
+
+
+(defn add-to-children [container & args]
+  "Adds itesm to container's children"
+  (let [children_list (.getChildren container)]
+    (.addAll children_list (to-array args ))))
+
+(defn make-linear-gradient [x0 y0 x1 y1 proportional cycle & stops]
+  (let [stopslist (map #(Stop. %1 %2) (range (count stops)) stops)]
+
+    (LinearGradient. (double x0) (double y0) (double x1) (double y1)
+                     proportional cycle
+                     (into-array stopslist))
+ )
+  )
+>>>>>>> 97d462c498f3d72d168f1c49eab9a5a9577fbde5
