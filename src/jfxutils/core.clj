@@ -87,48 +87,79 @@
 (defmacro run-now [& body]
   `(run-now* (fn [] ~@body)))
 
+(defn capitalize-words [words]
+  (map s/capitalize words))
+(defn capitalize-rest-words [words]
+  (cons (first words) (capitalize-words (rest words))))
+(defn split-hyph [txt]
+  (s/split txt #"-"))
+
 (defn camel-case
   "Convert camel-case-whatever string to camelCaseWhatever string.  If
-  prop is supplied and non-false, returns CamelCaseWhatever"
-  [s & [prop?]]
-  (let [split-words (s/split s #"-")
-        cased-words (if prop?
-                      (map s/capitalize split-words )
-                      (cons (first split-words) (map s/capitalize (rest split-words))))]
-    (s/join cased-words)))
+  prop is supplied and truthy, returns CamelCaseWhatever"
+  ([txt]
+   (camel-case txt false))
+  ([txt capitalize-first?]
+   (if capitalize-first?
+     (->> txt split-hyph capitalize-words s/join)
+     (->> txt split-hyph capitalize-rest-words s/join))))
 
 ;; Need to fix these to use reflection, so special cases are not
 ;; needed.  Somehow must determine which properties are observable
 ;; lists vs. other properties such as Boolean or other.  Can also
 ;; expand the various map protocols so we can access :fields of the
 ;; JFX object
-(defn add-children! [container args]
+(defn add-children! [container items]
   "Adds items to container's children.  Returns nil."
-  (let [obslist (.getChildren container)]
-    ;;(.addAll obslist (to-array args))
-    (.addAll obslist args)))
+  (.addAll (.getChildren container) items))
 
-(defn set-children! [container args]
-  "Sets items children to args.  Returns nil."
-  (let [obslist (.getChildren container)]
-    ;;(.setAll obslist (into-array args))
-    (.setAll obslist args)))
+(defn set-children! [container items]
+  "Sets containers children as items.  Returns nil."
+  (.setAll (.getChildren container) items))
 
-(defn add-items! [container args]
-  "Adds items to container's items from getItems.  Returns nil."
-  (let [obslist (.getItems container)]
-    (.addAll obslist args))) ;; need to-array?
+(defn add-items! [container items]
+  "Adds items to container's items.  Returns nil."
+  (.addAll (.getItems container) items)) ;; need to-array?
 
-(defn add-menus! [container args]
-  "Adds items to container's menus from getMenus.  Returns nil."
-  (let [obslist (.getMenus container)]
-    (.addAll obslist args)))
+(defn set-items! [container items]
+  "Sets items in container's items.  Returns nil."
+  (.setAll (.getItems container) items)) ;; need to-array?
 
-(defn set-columns! [tv args]
-  "Adds columns to TableView.  Returns nil."
-  (let [obslist (.getColumns tv)]
-    ;;(.setAll obslist (to-array args))
-    (.setAll obslist args)))
+(defn add-menus! [container items]
+  "Adds items to container's menus.  Returns nil."
+  (.addAll (.getMenus container) items))
+
+(defn set-menus! [container items]
+  "Sets container's menus as items.  Returns nil."
+  (.setAll (.getMenus container) items))
+
+(defn add-columns! [container items]
+  "Adds items to container's columns.  Returns nil."
+  (.addAll (.getColumns container) items))
+
+(defn set-columns! [container items]
+  "Sets container's columns as items  Returns nil."
+  (.setAll (.getColumns container) items))
+
+(defn add-tabs! [container items]
+  "Adds items to container's tabs.  Returns nil."
+  (.addAll (.getTabs container) items))
+
+(defn set-tabs! [container items]
+  "Sets items as container's tabs.  Returns nil."
+  (let [obslist (.getTabs container)]
+    (.setAll obslist items)))
+
+(defn add-transforms! [container items]
+  "Adds items to container's transforms.  Returns nil."
+  (.addAll (.getTransforms container) items))
+
+(defn set-transforms! [container items]
+  "Sets container's transforms as items.  Returns nil."
+  (.setAll (.getTransforms container) items))
+
+
+
 
 (defn set-list!
   "Sets list specified by which-list keyword to items seq.  Returns
@@ -136,10 +167,11 @@
   [obj which-list items]
   (case which-list
     :children (.setAll (.getChildren obj) items)
-    :items (.setAll (.getItems obj) items)
     :menus (.setAll (.getMenus obj) items)
+    :items (.setAll (.getItems obj) items)
     :columns (.setAll (.getColumns obj) items)
-    :tabs (.setAll (.getTabs obj) items)))
+    :tabs (.setAll (.getTabs obj) items)
+    :transforms (.setAll (.getTransforms obj) items)))
 
 (defn add-list!
   "Adds items to list specified by which-list keyword.  Returns
@@ -150,7 +182,8 @@
     :items (.addAll (.getItems obj) items)
     :menus (.addAll (.getMenus obj) items)
     :columns (.addAll (.getColumns obj) items)
-    :tabs (.addAll (.getTabs obj) items)))
+    :tabs (.addAll (.getTabs obj) items)
+    :transforms (.addAll (.getTransforms obj) items)))
 
 (defmacro set-prop!
   "Set property to value.  Actually this isn't less typing."
@@ -310,13 +343,17 @@
   arg is not keyword."
   [kw]
   (when (not (keyword? kw)) (throw (Exception. "Supplied key must be keyword")))
-  (cond (= :children kw) 'add-children!
-        (= :menus kw) 'add-menus!
-        (= :items kw) 'add-items!
-        (= :columns kw) 'set-columns!
-        (= :extra kw) nil
-        ;; make ".setCamelCaseWhatever" symbol
-        :else (symbol (str ".set" (camel-case (name kw) true)))))
+  (condp = kw ;; should be consistent with set- or add- !
+    :children  'set-children!
+    :menus  'set-menus!
+    :items 'set-items!
+    :columns 'set-columns!
+    :tabs 'set-tabs!
+    :transforms 'set-transforms!
+    :extra nil
+    ;; make ".setCamelCaseWhatever" symbol
+    ;;:else
+    (symbol (str ".set" (camel-case (name kw) true)))))
 
 (defn accum-kvps*
   "Process and accumulate key-value pairs, expanding anything inside an :extra clause"
@@ -407,7 +444,7 @@
   "Adds listener to property of node.  property must be
   keywordized-and-hyphenated JFX property, minus \"property\".  For
   example to add a ChangeListener mylistener to myCoolProperty
-  belonging to node mynode you would say (add-listener!
+  belonging to Node mynode you would say (add-listener!
   mynode :my-cool mylistener).  You can create a ChangeListener
   with (change-listener a b c d)"
   [node property listener]
@@ -420,12 +457,21 @@
   (let [propname (symbol (str "." (camel-case (name property)) "Property"))]
     `(.removeListener (~propname ~node) ~listener)))
 
+(defn add-event-filter!
+  "Adds event handler to a node for an event. You can create an
+  EventHandler with (event-handler [evt] bla bla).  This function
+  incldude for consistency/completeness, although invoking the javafx
+  function directly would be shorter."
+  [node evt handler]
+  (.addEventFilter node evt handler))
 
 (defmacro set-event-handler!
   "Sets event handler"
   [node event handler]
   (let [setfn (symbol (camel-case (str ".set-on-" (name event))))]
     `(~setfn ~node ~handler)))
+
+
 
 (defmacro callback 
   "Reifies the callback interface
@@ -506,22 +552,25 @@ No need to provide 'this' argument as the macro does this."
     ([width height]
      ;; Make a blank window with the given width and height
      ;; Window only shows immediately if we're not in the FX thread
+     ;;(println "HERE 1!!!!!!!!")
      (if (Platform/isFxApplicationThread)
        (jfxnew Stage :width width, :height height)
        (run-now (doto (jfxnew Stage :width width, :height height) .show)))))
 
   javafx.scene.Scene ;; used for Scene window of specified or unspecified size
   (stage
-    ([scene] 
+    ([scene]
      ;; Make a window with the given scene, leaving width and height
      ;; unspecified.  Window only shows immediately if we're not in
      ;; the FX thread.
+     ;;(println "HERE 2!!!!!!!!")
      (if (Platform/isFxApplicationThread)
        (jfxnew Stage :scene scene)
        (run-now (doto (jfxnew Stage :scene scene) .show))))
     ([scene [width height]]
      ;; Make a window with the given scene, width, and height 
      ;; Window only shows immediately if we're not in the FX thread
+     ;;(println "HERE 3!!!!!!!!")
      (if (Platform/isFxApplicationThread)
        (jfxnew Stage :width width, :height height :scene scene)
        (run-now (doto (jfxnew Stage :width width, :height height, :scene scene) .show)))))
@@ -530,9 +579,10 @@ No need to provide 'this' argument as the macro does this."
   (stage
     ([node]
      ;; Check if node can be put directly in scene, ie whether it
-     ;; derives from Paner.  Put it in a Group if not, typically a
+     ;; derives from Pane.  Put it in a Group if not, typically a
      ;; Canvas or similar.  Call 1-arg window again with no size
      ;; specification once we have a Scene."
+     ;;(println "HERE 4!!!!!!!!")
      (if (has-parent? (class node) javafx.scene.Parent)
        (stage(Scene. node)) 
        (stage (Scene. (Group. [node]))))) 
@@ -541,10 +591,14 @@ No need to provide 'this' argument as the macro does this."
      ;; derives from Parent.  Put it in a StackPane if not, typically a
      ;; Canvas or similar.  Call 2-arg window again with size
      ;; specification once we have a Scene.
+     ;;(println "HERE 5!!!!!!!!")
      (if (has-parent? (class node) javafx.scene.Parent)
        (stage (Scene. node) [width height]) ;; calls 2-arg Scene version with size
        (stage (Scene. (jfxnew StackPane :children [node])) [width height]))))) ;; calls 2-arg Scene version with size
 
+
+(defn select-values [map keyseq]
+  (vals (select-keys map keyseq)))
 
 (defmacro printexp
   "Allows quick printing of expression literal and their evaluated value"
@@ -562,16 +616,14 @@ No need to provide 'this' argument as the macro does this."
 
 (defn uni-bind!
   ;; Create a one-way binding from Property to var via a
-  ;; ChangeListener on the JFX Property.  This used for live-updating
-  ;; when editing, or for things like clicking a Checkbox; ie
-  ;; everything should update as soon as the property changes, rather
-  ;; than waiting to exit editing mode, or for cases like CheckBox
-  ;; where there is no editing mode. The Property is associated with
-  ;; a specific nested sub-element of the atom/ref map. prop is the
-  ;; UI property. var is the atom/ref in question. full-accesspath is a
-  ;; vector of arguments to assoc-in or update-in or get-in. This does
-  ;; NOT add a watch on the var.  If extra-fn is provided, it is
-  ;; executed after updating the var.
+  ;; ChangeListener on the JFX Property.  This is used for
+  ;; implementing the observer pattern.  The Property is associated
+  ;; with a specific nested sub-element of the atom/ref map.
+
+  ;; old comments: prop is the UI property. var is the atom/ref in
+  ;; question. full-accesspath is a vector of arguments to assoc-in or
+  ;; update-in or get-in. This does NOT add a watch on the var.  If
+  ;; extra-fn is provided, it is executed after updating the var.
   [prop actionfn & [extra-fn]]
   (.addListener ^Node prop (change-listener [oldval newval]
                            (actionfn newval)
@@ -624,6 +676,136 @@ No need to provide 'this' argument as the macro does this."
                                             (.setTranslateX node (+ (- sx ox) tx))
                                             (.setTranslateY node (+ (- sy oy) ty)))))
   node)
+
+(defn make-clipped!
+  "Adds listeners and clipping region to node so its children don't go
+  outside the bounds.  This is mostly used for Pane.  Taken from
+  http://news.kynosarges.org/2016/11/03/javafx-pane-clipping/"
+  [^javafx.scene.Node node]
+  (let [clip (Rectangle.)]
+    (.setClip node clip)
+    (add-listener! node :layout-bounds
+                   (change-listener [ov nv]
+                                    (.setWidth clip (.getWidth nv))
+                                    (.setHeight clip (.getHeight nv))))
+    node))
+
+(defn set-layout!
+  ;; Sets the layout position of the given node. Returns the node.
+  [^javafx.scene.Node node xpos ypos]
+  (doto node
+    (.setLayoutX xpos)
+    (.setLayoutY ypos)))
+
+(defn get-layout [^javafx.scene.Node node]
+  [(.getLayoutX node) (.getLayoutY node)])
+
+(defn set-translate!
+  ;; Sets the translate position of the given node. Returns the node.
+  ;; Arguments are either two doubles, or a Point2D
+
+  ([^javafx.scene.Node node ^double xpos ^double ypos]
+   (doto node
+     (.setTranslateX xpos)
+     (.setTranslateY ypos)))
+
+  ([^javafx.scene.Node node, ^javafx.geometry.Point2D pos]
+   (doto node
+     (.setTranslateX (.getX pos))
+     (.setTranslateY (.getY pos)))))
+
+(defn get-translate [^javafx.scene.Node node]
+  [(.getTranslateX node) (.getTranslateY node)])
+
+(defn set-center!
+  ;; Sets the center position of the given node. Returns the node.
+  ;; Arguments are either two doubles, or a Point2D
+
+  ([^javafx.scene.Node node ^double xpos ^double ypos]
+   (doto node
+     (.setCenterX xpos)
+     (.setCenterY ypos)))
+
+  ([^javafx.scene.Node node, ^javafx.geometry.Point2D pos]
+   (doto node
+     (.setCenterX (.getX pos))
+     (.setCenterY (.getY pos)))))
+
+(defn get-translate [^javafx.scene.Node node]
+  [(.getTranslateX node) (.getTranslateY node)])
+
+(defn set-scale!
+  ;; Sets the scale property of the given node.  This does not work on
+  ;; Affine Transforms; the scale works on the node's center, not
+  ;; necessarily its origin.  If one arge is given, this scale is
+  ;; applied to both axes.  If two args are given, the scales are
+  ;; applied to x and y axes, respectively.  Returns the node.
+  ([^javafx.scene.Node node scale]
+   (set-scale! node scale scale))
+  ([^javafx.scene.Node node xscale yscale]
+   (doto node
+     (.setScaleX xscale)
+     (.setScaleY yscale))))
+
+(defn get-scale [^javafx.scene.Node node]
+  [(.getScaleX node) (.getScaleY node)])
+
+
+
+
+
+;; See https://stackoverflow.com/questions/25566146/multiple-arity-in-defmacro-of-clojure
+(defn- set-xyfn!
+  ;; Sets the X,Y versions of a node's property.  For example, to
+  ;; change the translateX,Y of a node, you say (set-xy! mynode
+  ;; :translate newlocation) where newlocation is of type Point2D.
+  ;; Depending on the node, suitable values of property are
+  ;; :translate, :layout, :scale, :center, :start, :end.  If the
+  ;; property is *only* X, as in .setX, you leave out the property
+  ;; argument: (set-xy! mynode newlocation)
+
+  ;; All args are symbols!!, not the actual thing
+  ([node newpt] ;; no propname, just .setX, .setY
+   `(doto ~node
+      (.setX (.getX ~newpt))
+      (.setY (.getY ~newpt))))
+
+  ([node property newpt]
+   (let [propname (camel-case (name property) true)
+         setXfn (symbol (str ".set" propname "X"))
+         setYfn (symbol (str ".set" propname "Y"))]
+     `(doto ~node
+        (~setXfn (.getX ~newpt))
+        (~setYfn (.getY ~newpt))))))
+
+(defmacro set-xy!
+  [node & args]
+  (apply set-xyfn! node args))
+
+;; See https://stackoverflow.com/questions/25566146/multiple-arity-in-defmacro-of-clojure
+(defn- get-xyfn
+  ;; Gets the Point2D(X,Y) versions of a node's property.  For
+  ;; example, to get the translateX,Y of a node, you say (get-xy!
+  ;; mynode :translate).  Depending on the node, suitable values of
+  ;; property are :translate, :layout, :scale, :center, :start, :end.
+  ;; If the property is *only* X, as in .setX, you leave out the
+  ;; property argument: (get-xy! mynode)
+
+  ;; All args are symbols!!, not the actual thing
+  ([node] ;; no propname, just .setX, .setY
+   `(Point2D. (.getX ~node) (.getY ~node)))
+
+  ([node property]
+   (let [propname (camel-case (name property) true)
+         getXfn (symbol (str ".get" propname "X"))
+         getYfn (symbol (str ".get" propname "Y"))]
+     `(Point2D. (~getXfn ~node) (~getYfn ~node)))))
+
+(defmacro get-xy
+  [node & args]
+  (apply get-xyfn node args))
+
+
 
 (defmacro defn-memo [name & body]
   `(def ~name (memoize (fn ~body))))
@@ -738,7 +920,7 @@ No need to provide 'this' argument as the macro does this."
   []
   (str (java.util.UUID/randomUUID)))
 
-(defn subnodes [node]
+#_(defn subnodes [node]
   (condp = (class node)
     javafx.scene.control.ToolBar (.getItems node)
     javafx.scene.layout.BorderPane [(.getTop node)
@@ -748,6 +930,17 @@ No need to provide 'this' argument as the macro does this."
                                     (.getCenter node)]
     javafx.scene.layout.StackPane (.getChildren node)
     nil))
+
+(defn subnodes
+  "Returns a node's subnodes, such as children or items.  Returns nil
+  if none found"
+  [node]
+  (let [klass (class node)]
+    (if-let [method (or (try (.getMethod klass "getChildren" nil)
+                             (catch NoSuchMethodException e))
+                        (try (.getMethod klass "getItems" nil)
+                             (catch NoSuchMethodException e)))]
+      (.invoke method node nil))))
 
 (defn dfs-search
   ;;Depth first search.  Goal is value to look for.  Node is node that
@@ -768,29 +961,8 @@ No need to provide 'this' argument as the macro does this."
   "Does 'manual' lookup of chidren.  Used when node is not in Scene
   graph."
   [id node]
-  (letfn [#_(getid [node] (.getId node))
-          #_(lkup [id node getter]
-            (loop [items (getter node)]
-              (if (empty? items) nil
-                  (if (= (.getId (first items)) id)
-                    (first items)
-                    (recur (rest items))))))]
-    (if (= (.getId node) id) node
-        (dfs-search id node #(.getId %))
-      #_(condp = (class node)
-        javafx.scene.control.ToolBar (do (println "we have a ToolBar")
-                                         ;;(lkup id node #(.getItems %))
-                                         (dfs-search id node #(vector (.getItems %)) getid))
-        javafx.scene.layout.BorderPane (do (println "we have a BorderPane")
-                                           (or (dfs-search id node #(vector (.getTop %)) getid)
-                                               (dfs-search id node #(vector (.getBottom %)) getid)
-                                               (dfs-search id node #(vector (.getLeft %)) getid)
-                                               (dfs-search id node #(vector (.getRight %)) getid)
-                                               (dfs-search id node #(vector (.getCenter %)) getid)))
-        javafx.scene.layout.StackPane (do (println "we have a StackPane")
-                                          ;;(lkup id node #(.getChildren %))
-                                          (dfs-search id node #(vector (.getChildren %)) getid))
-    ))))
+  (if (= (.getId node) id) node
+      (dfs-search id node #(.getId %))))
 
 (defn lookup
   "Lookup up a node with id string starting at Node node.  If
@@ -867,6 +1039,17 @@ No need to provide 'this' argument as the macro does this."
 
 ;; type
 
+(defn assoc-in-pairs
+ "Same as assoc-in, ecxept allows pairs of keys and values"
+  [m ks v & args]
+  (when (and args (odd? (count args)))
+    (throw (Exception. "Args, if supplied, must be even")))
+  (let [newm (assoc-in m ks v)]
+    (if (empty? args)
+      newm
+      (let [arg-pairs (partition 2 args)
+            reducer (fn [m [k v]] (assoc-in m k v))]
+        (reduce reducer newm arg-pairs)))))
 
 (defn -main [& args]
   (javafx.application.Platform/setImplicitExit true)
