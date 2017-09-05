@@ -158,6 +158,10 @@
   "Sets container's transforms as items.  Returns nil."
   (.setAll (.getTransforms container) items))
 
+(defn set-buttons! [container items]
+  "Sets container's transforms as items.  Returns nil."
+  (.setAll (.getButtons container) items))
+
 
 
 
@@ -171,7 +175,8 @@
     :items (.setAll (.getItems obj) items)
     :columns (.setAll (.getColumns obj) items)
     :tabs (.setAll (.getTabs obj) items)
-    :transforms (.setAll (.getTransforms obj) items)))
+    :transforms (.setAll (.getTransforms obj) items)
+    :buttons (.setAll (.getButtons obj) items))) ;; for SegmentedButton
 
 (defn add-list!
   "Adds items to list specified by which-list keyword.  Returns
@@ -183,13 +188,64 @@
     :menus (.addAll (.getMenus obj) items)
     :columns (.addAll (.getColumns obj) items)
     :tabs (.addAll (.getTabs obj) items)
-    :transforms (.addAll (.getTransforms obj) items)))
+    :transforms (.addAll (.getTransforms obj) items)
+    :buttons (.addAll (.getButtons obj) items))) ;; for SegmentedButton
 
-(defmacro set-prop!
-  "Set property to value.  Actually this isn't less typing."
-  [obj property value]
-  (let [prop-name# (str "." (camel-case (name property)) "Property")]
+(defmacro set-prop-val!*
+  "Sets property value to value.  property arg must be keyword
+  literal."
+  [obj prop value]
+  (let [prop-name# (str "." (camel-case (name prop)) "Property")]
     `(.set (~(symbol prop-name#) ~obj) ~value)))
+
+(defn set-prop-val!
+  "Sets property value to value.  property arg must evaluate to
+  keyword.  Uses reflection."
+  [obj prop value]
+  (let [methodname (str "set" (-> prop
+                                  name
+                                  (camel-case true)))]
+    (clojure.lang.Reflector/invokeInstanceMethod
+     obj methodname (into-array [value]))))
+
+(defmacro get-prop-val*
+  "Gets property value.  property arg must be keyword literal."
+  [obj prop]
+  (let [prop-name# (str "." (camel-case (name prop)) "Property")]
+    `(.get (~(symbol prop-name#) ~obj))))
+
+(defn get-prop-val
+  "Gets property value.  property arg must evaluate to keyword.  Uses
+  reflection."
+  [obj prop]
+  (let [methodname (str "get" (-> prop
+                                  name
+                                  (camel-case true)))]
+    (.. obj
+        getClass
+        (getMethod methodname nil)
+        (invoke obj nil))))
+
+(defmacro get-property*
+  "Gets the property of obj.  Prop must be a keyword literal."
+  [obj# prop#]
+  (let [prop-name# (camel-case (name prop#) false)
+        get-prop-fn# (symbol (str "." prop-name# "Property"))]
+    `(~get-prop-fn# ~obj#)))
+
+(defn get-property
+  "Gets the property of obj.  Prop must evaluate to keyword literal,
+  but doesn't have to be a keyword. Uses reflection."
+  [obj prop]
+  (let [methodname (-> prop
+                       name
+                       camel-case
+                       (str "Property"))]
+    (.. obj
+        getClass
+        (getMethod methodname nil)
+        (invoke obj nil))))
+
 
 (defn linear-gradient [x0 y0 x1 y1 proportional cycle & stops]
   (let [stopslist (map #(Stop. %1 %2) (range (count stops)) stops)]
@@ -237,7 +293,7 @@
 (defn nested-sort-by
   "Returns collection sorted by applying arg funcs in sequence until a
   non-equal comparison appears."
-  [sort-order coll]
+  [coll sort-order]
   (sort-by identity (nested-comparator sort-order) coll))
 
 (defn clean-sort-order
@@ -292,7 +348,7 @@
   arg is vector of one or more of the following keywords: private,
   protected, static, final, synthetic.  If flags is nil, shows all
   members."
-  [sort-order obj & flags]
+  [obj sort-order & flags]
   (let [sorted-members (nested-sort-by sort-order (apply members obj flags))
         allkeys (all-keys sorted-members)
         display-keys (move-sorted-keys-to-front allkeys sort-order)]
@@ -350,6 +406,7 @@
     :columns 'set-columns!
     :tabs 'set-tabs!
     :transforms 'set-transforms!
+    :buttons 'set-buttons!
     :extra nil
     ;; make ".setCamelCaseWhatever" symbol
     ;;:else
@@ -440,7 +497,7 @@
   `(reify javafx.beans.value.ChangeListener
      (~'changed [~'this ~'observable ~@arg] ~@body)))
 
-(defmacro add-listener!
+(defmacro add-listener!*
   "Adds listener to property of node.  property must be
   keywordized-and-hyphenated JFX property, minus \"property\".  For
   example to add a ChangeListener mylistener to myCoolProperty
@@ -451,7 +508,14 @@
   (let [propname (symbol (str "." (camel-case (name property)) "Property"))]
     `(.addListener (~propname ~node) ~listener)))
 
-(defmacro remove-listener!
+(defn add-listener!
+  "Adds listener to property of node.  Prop must evaluate to keyword
+  property.  Uses reflection."
+  [node property listener]
+  (let [prop (get-property node property)]
+    (.addListener prop listener)))
+
+(defmacro remove-listener!*
   "Removes listener.  Just for symmetry."
   [node property listener]
   (let [propname (symbol (str "." (camel-case (name property)) "Property"))]
@@ -614,7 +678,8 @@ No need to provide 'this' argument as the macro does this."
   [coll]
   (FXCollections/observableArrayList (to-array coll)))
 
-(defn uni-bind!
+
+#_(defn uni-bind!
   ;; Create a one-way binding from Property to var via a
   ;; ChangeListener on the JFX Property.  This is used for
   ;; implementing the observer pattern.  The Property is associated
@@ -751,9 +816,6 @@ No need to provide 'this' argument as the macro does this."
   [(.getScaleX node) (.getScaleY node)])
 
 
-
-
-
 ;; See https://stackoverflow.com/questions/25566146/multiple-arity-in-defmacro-of-clojure
 (defn- set-xyfn!
   ;; Sets the X,Y versions of a node's property.  For example, to
@@ -766,17 +828,19 @@ No need to provide 'this' argument as the macro does this."
 
   ;; All args are symbols!!, not the actual thing
   ([node newpt] ;; no propname, just .setX, .setY
-   `(doto ~node
-      (.setX (.getX ~newpt))
-      (.setY (.getY ~newpt))))
+   `(let [evnp# ~newpt]
+      (doto ~node
+        (.setX (.getX evnp#))
+        (.setY (.getY evnp#)))))
 
   ([node property newpt]
    (let [propname (camel-case (name property) true)
          setXfn (symbol (str ".set" propname "X"))
          setYfn (symbol (str ".set" propname "Y"))]
-     `(doto ~node
-        (~setXfn (.getX ~newpt))
-        (~setYfn (.getY ~newpt))))))
+     `(let [evnp# ~newpt]
+        (doto ~node
+          (~setXfn (.getX evnp#))
+          (~setYfn (.getY evnp#)))))))
 
 (defmacro set-xy!
   [node & args]
@@ -804,7 +868,6 @@ No need to provide 'this' argument as the macro does this."
 (defmacro get-xy
   [node & args]
   (apply get-xyfn node args))
-
 
 
 (defmacro defn-memo [name & body]
@@ -910,7 +973,7 @@ No need to provide 'this' argument as the macro does this."
     (.play rotator)
     rect))
 
-(defn map-replace
+#_(defn map-replace
 "Ignores old.  Returns new.  Used in swap! instead of reset!"
   [old new] new)
 
@@ -920,25 +983,17 @@ No need to provide 'this' argument as the macro does this."
   []
   (str (java.util.UUID/randomUUID)))
 
-#_(defn subnodes [node]
-  (condp = (class node)
-    javafx.scene.control.ToolBar (.getItems node)
-    javafx.scene.layout.BorderPane [(.getTop node)
-                                    (.getBottom node)
-                                    (.getLeft node)
-                                    (.getRight node)
-                                    (.getCenter node)]
-    javafx.scene.layout.StackPane (.getChildren node)
-    nil))
 
 (defn subnodes
   "Returns a node's subnodes, such as children or items.  Returns nil
-  if none found"
+  if none found.  Uses reflection, so it's probably slow."
   [node]
   (let [klass (class node)]
     (if-let [method (or (try (.getMethod klass "getChildren" nil)
                              (catch NoSuchMethodException e))
                         (try (.getMethod klass "getItems" nil)
+                             (catch NoSuchMethodException e))
+                        (try (.getMethod klass "getButtons" nil)
                              (catch NoSuchMethodException e)))]
       (.invoke method node nil))))
 
@@ -986,58 +1041,7 @@ No need to provide 'this' argument as the macro does this."
          (throw (Exception. "Must specify :down or no direction when node is not in scene graph."))
          (lookup-children id node))))))
 
-;; satisfies?
-;; instance?
-;;Evaluates x and tests if it is an instance of the class c. Returns true or false
 
-;; bases
-;;Returns the immediate superclass and direct interfaces of c, if any
-
-;; supers
-;;Returns the immediate and indirect superclasses and interfaces of c, if any
-
-;; (parents tag)(parents h tag)
-;;Returns the immediate parents of tag, either via a Java type
-;;inheritance relationship or a relationship established via derive. h
-;;must be a hierarchy obtained from make-hierarchy, if not supplied
-;;defaults to the global hierarchy
-
-;; (ancestors tag)(ancestors h tag)
-;;Returns the immediate and indirect parents of tag, either via a Java type
-;;inheritance relationship or a relationship established via derive. h
-;;must be a hierarchy obtained from make-hierarchy, if not supplied
-;;defaults to the global hierarchy
-
-;; (descendants tag)(descendants h tag)
-;;Returns the immediate and indirect children of tag, through a
-;;relationship established via derive. h must be a hierarchy obtained
-;;from make-hierarchy, if not supplied defaults to the global
-;;hierarchy. Note: does not work on Java type inheritance
-;;relationships.
-
-;; (derive tag parent)(derive h tag parent)
-;;Establishes a parent/child relationship between parent and
-;;tag. Parent must be a namespace-qualified symbol or keyword and
-;;child can be either a namespace-qualified symbol or keyword or a
-;;class. h must be a hierarchy obtained from make-hierarchy, if not
-;;supplied defaults to, and modifies, the global hierarchy.
-
-;; (make-hierarchy)
-;;Creates a hierarchy object for use with derive, isa? etc.
-
-;; (isa? child parent)(isa? h child parent)
-;;Returns true if (= child parent), or child is directly or indirectly derived from
-;;parent, either via a Java type inheritance relationship or a
-;;relationship established via derive. h must be a hierarchy obtained
-;;from make-hierarchy, if not supplied defaults to the global
-;;hierarchy
-
-;; (underive tag parent)(underive h tag parent)
-;;Removes a parent/child relationship between parent and
-;;tag. h must be a hierarchy obtained from make-hierarchy, if not
-;;supplied defaults to, and modifies, the global hierarchy.
-
-;; type
 
 (defn assoc-in-pairs
  "Same as assoc-in, ecxept allows pairs of keys and values"
