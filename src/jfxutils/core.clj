@@ -1,45 +1,159 @@
 (ns jfxutils.core
   (:require [clojure.string  :as s])
-  (:use [clojure repl pprint reflect set])
-  (:import   [com.sun.javafx.stage StageHelper]
-             [de.codecentric.centerdevice.javafxsvg SvgImageLoaderFactory]
-             [java.io PrintWriter]
-             [java.net URL URI ]
-             [javafx.application Platform]
-             [javafx.animation RotateTransition Animation Interpolator]
-             [javafx.beans.property ReadOnlyIntegerProperty]
-             [javafx.beans.value ChangeListener ObservableValue]
-             [javafx.collections FXCollections]
-             [javafx.event ActionEvent EventHandler]
-             [javafx.geometry Insets]
-             [javafx.scene.control Button]
-             [javafx.scene Group Scene Node Parent]
-             [javafx.scene.shape Rectangle]
-             [javafx.scene.image Image ImageView]
-             [javafx.scene.layout BorderPane StackPane Background BackgroundFill CornerRadii]
-             [javafx.scene.paint LinearGradient Stop CycleMethod Color]
-             [javafx.scene.text Text]
-             [javafx.stage Stage]
-             [javafx.util Duration ]
-             [java.nio.file Paths Path]))
+  (:use [clojure repl pprint reflect set]
+        [clojure.java.io :as io])
+  (:import   (com.sun.javafx.stage StageHelper)
+             (java.io PrintWriter)
+             (java.net URL URI )
+             (javafx.application Platform)
+             (javafx.animation RotateTransition Animation Interpolator)
+             (javafx.beans.property ReadOnlyIntegerProperty)
+             (javafx.beans.value ChangeListener ObservableValue)
+             (javafx.collections FXCollections)
+             (javafx.event ActionEvent EventHandler)
+             (javafx.geometry Insets)
+             (javafx.scene.control Button)
+             (javafx.scene Group Scene Node Parent)
+             (javafx.scene.shape Rectangle)
+             (javafx.scene.image Image ImageView)
+             (javafx.scene.layout BorderPane StackPane Background BackgroundFill CornerRadii)
+             (javafx.scene.paint LinearGradient Stop CycleMethod Color)
+             (javafx.stage Stage)
+             (javafx.util Duration )
+             (java.nio.file Paths Path)
+             (javafx.fxml FXMLLoader))
+  (:gen-class))
+
+(println "---")
+
+(defn nopt-opt?
+  ;; Returns false only if java option is "false", true otherwise.
+  [s]
+  (if-let [optstr (System/getProperty s)]
+    (not (= "false" (clojure.string/lower-case optstr)))
+    true))
+
+(defn opt-opt?
+  ;; Returns true only if java option is "true", false otherwise
+  [s]
+  (let [optstr (System/getProperty s)]
+    (Boolean/valueOf optstr)))
+
+(defn init-toolkit?
+  ;; Used to forcibly disable toolkit initialization, used when you
+  ;; know there are no classes which require static initialization
+  []
+  (nopt-opt? "init-toolkit"))
+
+(defn auto-terminate?
+  ;; Used to forcibly disable auto-terminate, typically for repl profile
+  []
+  (nopt-opt? "toolkit-auto-terminate"))
+
+(defn implicit-exit?
+  ;; Used to forcibly disable implicit-exit, typically for repl profile
+  []
+  (nopt-opt? "toolkit-implicit-exit"))
+
+(defn debug?
+  ;; Used to enable debug strings
+  []
+  (opt-opt? "toolkit-debug"))
+
+(defn timeout
+  ;; Used to set timeout for watchdog thread
+  []
+  (if-let [optstr (System/getProperty "toolkit-compile-timeout")]
+    (Long/parseLong optstr)
+    5000))
+
+(defn set-exit
+  ;; Sets value of implicit exit
+  [exit?]
+  ;;(println "Implicit exit set to:" exit?)
+  (javafx.application.Platform/setImplicitExit exit?))
+
+(when (debug?)
+  (println "jvm-opt init-toolkit:" (init-toolkit?))
+  (println "jvm-opt auto-terminate:" (auto-terminate?))
+  (println "jvm-opt implicit-exit:" (implicit-exit?))
+  (println "jvm-opt timeout:" (timeout)))
+
+(def bgrunning (atom true))
+(def sleeper (atom nil))
 
 
-(SvgImageLoaderFactory/install) ;; Allows us to use SVG files in JavaFX
-(defonce force-toolkit-init (javafx.embed.swing.JFXPanel.))         
+;; The first time app is initted, it starts a timer thread
+;; which goes for 5 seconds max.  If during the 5 seconds,
+;; bgrunning is set to false, then it quits harmlessly.  If
+;; the 5 seconds expires without bgrunning set to false,
+;; then it kills the FX thread.  The second time the app
+;; is initted, it checks whether sleeper has been created,
+;; and if it has, then it sets bgrunning to false.
+;; The idea here is that if the app hasn't started, the FX
+;; thread runs in the background so other thing can compile.
+;; Assuming 5s is long enough, the FX thread quits, allowing
+;; lein to continue.
+(defn app-init []
+  (when (and @sleeper @bgrunning)
+    (when (debug?)
+      (println "Disabling auto-terminate"))
+    (reset! bgrunning false))
+  (defonce toolkit-initted
+    (let [jfxpanel (javafx.embed.swing.JFXPanel.)
+          compile? *compile-files*
+          killfn  (fn []
+                    (when (debug?)
+                      (println "Watchdog thread started"))
+                    (let [now (System/currentTimeMillis)]
+                      (while (and (< (- (System/currentTimeMillis) now)
+                                     (timeout))
+                                  @bgrunning)
+                        (Thread/sleep 100)))
+                    ;; Override auto-terminate=false if compiling
+                    (when (debug?)
+                      (println "In thread *compile-files* =" compile?))
+                    (when (and (debug?) compile?)
+                      (println "Killing application thread because compiling"))
+                    (when (and (debug?)
+                               @bgrunning
+                               (auto-terminate?))
+                      (println "Killing application thread because auto-terminate"))
+                    (when (or compile?
+                              (and @bgrunning
+                                   (auto-terminate?)))
+                      (javafx.application.Platform/exit))
+                    (when (debug?)
+                      (println "Watchdog thread ended")))]
+      (when (debug?)
+        (println "Toolkit initting"))
+      (reset! sleeper  (Thread. killfn))
+      (.start @sleeper)
+      jfxpanel)))
 
-;; For some reason the following must be imported after initting the toolkit
-(import  [javafx.scene.control Label TextArea])
+(when (and (debug?) init-toolkit?)
+  (println "Toolkit init due to init-toolkit=true"))
 
+#_(when (and (debug?) (not *compile-files*))
+  (println "Toolkit init due to not compiling"))
 
-;; This prevents thread from finishing when last window closes and
-;; allows restarting of application
-(javafx.application.Platform/setImplicitExit false)
+#_(when (and (debug?) *compile-files*)
+  (println "Compiling files"))
+
+(if (or (init-toolkit?)
+    ;;    (not *compile-files*)
+        )
+  (do
+    (app-init)
+    (set-exit (implicit-exit?)))
+  (when (debug?)
+    (println "Not initting toolkit")))
 
 (defn classpath
   "Shows the classpath.  Not really a jfx util, but useful anyway"
   []
-  (doseq [cp (seq (.getURLs (java.lang.ClassLoader/getSystemClassLoader)))]
-    (println cp)))
+  (pprint
+   (map str (.getURLs (java.lang.ClassLoader/getSystemClassLoader)))))
 
 (defn resource-path
   "Returns Path object of location specified by string s"
@@ -62,9 +176,6 @@
         (instance? URI locator) (Paths/get (str "file://" locator))
         (instance? URL locator) (path (.getPath locator))))
 
-
-
-
 (defn run-later*
   "Returns nil"
   [f]
@@ -73,13 +184,15 @@
 (defmacro run-later [& body]
   `(run-later* (fn [] ~@body)))
 
+(defn threadname []
+  (.getName (Thread/currentThread)))
+
 (defn run-now*
   "Returns result of f"
   [f]
   (let [result (promise)]
     ;; run-later returns nil, but deliver puts the return value of f
-    ;; into the promise.  This makes sense since run-now is blocking,
-    ;; but run-later returns immediately.
+    ;; into the promise.
     (run-later
      (deliver result (try (f) (catch Throwable e e))))
     @result))
@@ -89,14 +202,20 @@
 
 (defn capitalize-words [words]
   (map s/capitalize words))
+
 (defn capitalize-rest-words [words]
   (cons (first words) (capitalize-words (rest words))))
+
 (defn split-hyph [txt]
   (s/split txt #"-"))
 
+(defn join-hyph
+  "Join non-nil args (presumably string) with hypen."
+  [& strs]
+  (clojure.string/join "-" (remove nil? strs)))
+
 (defn camel-case
-  "Convert camel-case-whatever string to camelCaseWhatever string.  If
-  prop is supplied and truthy, returns CamelCaseWhatever"
+  "Convert string 'camel-case-whatever' to 'camelCaseWhatever'."
   ([txt]
    (camel-case txt false))
   ([txt capitalize-first?]
@@ -143,7 +262,7 @@
 
 (defn add-tabs! [container items]
   "Adds items to container's tabs.  Returns nil."
-  (.addAll (.getTabs container) items))
+  (.addAll (.getTabs container)  items))
 
 (defn set-tabs! [container items]
   "Sets items as container's tabs.  Returns nil."
@@ -162,6 +281,14 @@
   "Sets container's transforms as items.  Returns nil."
   (.setAll (.getButtons container) items))
 
+(defn add-stylesheets! [scene sheets]
+  "Adds scene's stylesheets.  Returns nil."
+  (.addAll (.getStylesheets scene) sheets))
+
+(defn set-stylesheets! [scene sheets]
+  "Sets scene's stylesheets.  Returns nil."
+  (.setAll (.getStylesheets scene) sheets))
+
 
 
 
@@ -176,7 +303,8 @@
     :columns (.setAll (.getColumns obj) items)
     :tabs (.setAll (.getTabs obj) items)
     :transforms (.setAll (.getTransforms obj) items)
-    :buttons (.setAll (.getButtons obj) items))) ;; for SegmentedButton
+    :buttons (.setAll (.getButtons obj) items)  ;; for SegmentedButton
+    :stylesheets (.setAll (.getStylesheets obj) items)))
 
 (defn add-list!
   "Adds items to list specified by which-list keyword.  Returns
@@ -189,7 +317,8 @@
     :columns (.addAll (.getColumns obj) items)
     :tabs (.addAll (.getTabs obj) items)
     :transforms (.addAll (.getTransforms obj) items)
-    :buttons (.addAll (.getButtons obj) items))) ;; for SegmentedButton
+    :buttons (.addAll (.getButtons obj) items) ;; for SegmentedButton
+    :stylesheets (.addAll (.getStylesheets obj) items))) 
 
 (defmacro set-prop-val!*
   "Sets property value to value.  property arg must be keyword
@@ -407,6 +536,7 @@
     :tabs 'set-tabs!
     :transforms 'set-transforms!
     :buttons 'set-buttons!
+    :stylesheets 'set-stylesheets!
     :extra nil
     ;; make ".setCamelCaseWhatever" symbol
     ;;:else
@@ -535,7 +665,11 @@
   (let [setfn (symbol (camel-case (str ".set-on-" (name event))))]
     `(~setfn ~node ~handler)))
 
-
+(defmacro set-button-handler!
+  "Sets event handler on button's action event. Pass the event name as
+  arg, eg (set-event-handler! MyButton [evt] (println evt))"
+  [node [evt] & args]
+  `(set-event-handler! ~node :action (event-handler [~evt] ~@args)))
 
 (defmacro callback 
   "Reifies the callback interface
@@ -550,12 +684,12 @@ No need to provide 'this' argument as the macro does this."
   ([out]
    ;; Creates appropriate writers, etc., and returns Scene
    ;; printwriter should be bound to *out* later
-   (let [ta (TextArea.)
+   (let [ta (javafx.scene.control.TextArea.)
          output-stream (proxy [java.io.OutputStream] []
                          (write [buf offset length] ;; buf is bytes[] of 8192 long
                            (.appendText ta (String. (byte-array (take length buf))))))
          print-writer (PrintWriter. output-stream true)
-         label (Label.)
+         label (javafx.scene.control.Label.)
          scene (Scene. (jfxnew BorderPane ta :bottom label))
          dimprint (fn [w h & args] (str "Width: " w ", Height: " h ", "  args))
          linecount (fn [] (count (clojure.string/split (.getText ta) #"\n")))
@@ -643,22 +777,22 @@ No need to provide 'this' argument as the macro does this."
   (stage
     ([node]
      ;; Check if node can be put directly in scene, ie whether it
-     ;; derives from Pane.  Put it in a Group if not, typically a
+     ;; derives from Parent.  Put it in a Group if not, typically a
      ;; Canvas or similar.  Call 1-arg window again with no size
      ;; specification once we have a Scene."
      ;;(println "HERE 4!!!!!!!!")
      (if (has-parent? (class node) javafx.scene.Parent)
-       (stage(Scene. node)) 
-       (stage (Scene. (Group. [node]))))) 
+       (stage (Scene. node))
+       (stage (Scene. (StackPane. [node]))))) 
     ([node [width height]]
      ;; Check if node can be put directly in scene, ie whether it
-     ;; derives from Parent.  Put it in a StackPane if not, typically a
-     ;; Canvas or similar.  Call 2-arg window again with size
-     ;; specification once we have a Scene.
+     ;; derives from Parent.  Put it in a StackPane if not. Typically
+     ;; non-parent would be a Canvas.  Call 2-arg window again with
+     ;; size specification once we have a Scene.
      ;;(println "HERE 5!!!!!!!!")
      (if (has-parent? (class node) javafx.scene.Parent)
        (stage (Scene. node) [width height]) ;; calls 2-arg Scene version with size
-       (stage (Scene. (jfxnew StackPane :children [node])) [width height]))))) ;; calls 2-arg Scene version with size
+       (stage (Scene. (StackPane. [node])) [width height]))))) ;; calls 2-arg Scene version with size
 
 
 (defn select-values [map keyseq]
@@ -916,12 +1050,21 @@ No need to provide 'this' argument as the macro does this."
 
 (defn gradient-background
   "Makes smooth background with two colors."
-  [direction c1 c2]
+  [direction color1 color2]
   (let [grad (condp = direction
-                 :vertical (simple-vert-gradient c1 c2)
-                 :horizontal (simple-horiz-gradient c1 c2))]
+                 :vertical (simple-vert-gradient color1 color2)
+                 :horizontal (simple-horiz-gradient color1 color2))]
     (Background. (into-array
-                  [(BackgroundFill. grad CornerRadii/EMPTY  Insets/EMPTY)]))))
+                  [(BackgroundFill. grad nil nil)]))))
+
+(defn background
+  "Makes a background with one or two colors. If two colors are
+  provided, makes a vertical gradient."
+  ([color]
+   (Background. (into-array [(BackgroundFill. color nil nil)])))
+  ([color1 color2]
+   (gradient-background :vertical color1 color2)
+   ))
 
 
 (defn background-populate
@@ -973,16 +1116,11 @@ No need to provide 'this' argument as the macro does this."
     (.play rotator)
     rect))
 
-#_(defn map-replace
-"Ignores old.  Returns new.  Used in swap! instead of reset!"
-  [old new] new)
-
 
 (defn uuid
   "Generates new random string"
   []
   (str (java.util.UUID/randomUUID)))
-
 
 (defn subnodes
   "Returns a node's subnodes, such as children or items.  Returns nil
@@ -994,16 +1132,22 @@ No need to provide 'this' argument as the macro does this."
                         (try (.getMethod klass "getItems" nil)
                              (catch NoSuchMethodException e))
                         (try (.getMethod klass "getButtons" nil)
+                             (catch NoSuchMethodException e))
+                        (try (.getMethod klass "getContent" nil)
                              (catch NoSuchMethodException e)))]
-      (.invoke method node nil))))
+      ;; Force result to be a list of some sort
+      (let [result (.invoke method node nil)]
+        (try (seq result) ;; will use seqable? in clojure 1.9
+             (catch IllegalArgumentException e
+               [result]))))))
 
 (defn dfs-search
   ;;Depth first search.  Goal is value to look for.  Node is node that
   ;;contains one ore more values.  Getsubs returns next list of nodes.
   ;;getval returns value for a given node.
-  [goal node getval]
+  [node goal getter]
   (letfn [(inner-search [node]
-            (if (= goal (getval node))
+            (if (= goal (getter node))
               node
               (loop [nodes (subnodes node)]
                 (if (empty? nodes) nil
@@ -1015,9 +1159,9 @@ No need to provide 'this' argument as the macro does this."
 (defn lookup-children
   "Does 'manual' lookup of chidren.  Used when node is not in Scene
   graph."
-  [id node]
+  [node id]
   (if (= (.getId node) id) node
-      (dfs-search id node #(.getId %))))
+      (dfs-search node id #(.getId %))))
 
 (defn lookup
   "Lookup up a node with id string starting at Node node.  If
@@ -1029,45 +1173,44 @@ No need to provide 'this' argument as the macro does this."
   function.  If the node is not in a scene graph, then only :down (or
   omitting the third argument) will work, in which case a 'manual'
   search is done."
-  ([id node] (lookup id node :down))
-  ([id node direction]
+  ([node id] (lookup node id :down))
+  ([node id direction]
    (let [full-id (str "#" id)]
-     (if-let [scene (.getScene node)]
-       (condp = direction
-         :up (.lookup (.getScene node) full-id)
-         :down (.lookup node full-id))
-       ;; no scene, so search down
-       (if (= direction :up)
-         (throw (Exception. "Must specify :down or no direction when node is not in scene graph."))
-         (lookup-children id node))))))
+     (cond
+       (instance? javafx.stage.Stage node) (.lookup (.getScene node) full-id)
+       (instance? javafx.scene.Scene node) (.lookup node full-id)
+       :else (if-let [scene (.getScene node)]
+               (condp = direction
+                 :up (.lookup scene full-id)
+                 :down (.lookup node full-id))
+
+               ;; no scene, so search down
+               (if (= direction :up)
+                 (throw (Exception. "Must specify :down or no direction when node is not in scene graph."))
+                 (lookup-children node id)))))))
+
+
+(defn load-fxml-root [fxml-filename]
+  (FXMLLoader/load (io/resource fxml-filename)))
 
 
 
-(defn assoc-in-pairs
- "Same as assoc-in, ecxept allows pairs of keys and values"
-  [m ks v & args]
-  (when (and args (odd? (count args)))
-    (throw (Exception. "Args, if supplied, must be even")))
-  (let [newm (assoc-in m ks v)]
-    (if (empty? args)
-      newm
-      (let [arg-pairs (partition 2 args)
-            reducer (fn [m [k v]] (assoc-in m k v))]
-        (reduce reducer newm arg-pairs)))))
 
 (defn -main [& args]
-  (javafx.application.Platform/setImplicitExit true)
+  ;; In repl, auto-termination is automatically disabled.
+  ;; When not in repl (lein run, java -jar jfxutils.jar, etc)
+  ;; the auto-termination must be disabled by the application.
+  (app-init)
   (println "I'm a library.  Don't run me.")
-  (run-now (let [stage (Stage.)
-                 bp (BorderPane.)
-                 scene (Scene. bp)
-                 text (Text. "I'm a library.\nDon't run me")]
-             (.setCenter bp text)
-             (.setScene stage scene)
-             (.show stage))))
+  
+  (let [button (jfxnew Button "Okay"
+                       :on-action (event-handler [evt]
+                                                 (javafx.application.Platform/exit)))
+        bp (jfxnew BorderPane
+                   :center (javafx.scene.text.Text. "I'm a library.\nDon't run me")
+                   :bottom button)]
+    (BorderPane/setAlignment button javafx.geometry.Pos/CENTER)
 
-
-
-
+    (stage bp)))
 
 
