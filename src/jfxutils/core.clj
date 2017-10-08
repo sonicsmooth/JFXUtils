@@ -192,6 +192,7 @@
   (cons (first words) (capitalize-words (rest words))))
 
 (defn split-hyph [txt]
+  "Splits text at hyphens"
   (clojure.string/split txt #"-"))
 
 (defn join-hyph
@@ -274,8 +275,12 @@
   "Sets scene's stylesheets.  Returns nil."
   (.setAll (.getStylesheets scene) sheets))
 
-
-
+(defmacro set-on-action!
+  ;; Evaluates to (.setOnAction node (event-handler [event] body)
+  ;; body is run when the action occurs.  The body has access to
+  ;; the event
+  [node body]
+  `(.setOnAction ~node (event-handler [~'event] (~@body))))
 
 (defn set-list!
   "Sets list specified by which-list keyword to items seq.  Returns
@@ -305,6 +310,7 @@
     :buttons (.addAll (.getButtons obj) items) ;; for SegmentedButton
     :stylesheets (.addAll (.getStylesheets obj) items))) 
 
+;; Opposite of clojure naming convention
 (defmacro set-prop-val!*
   "Sets property value to value.  property arg must be keyword
   literal."
@@ -525,11 +531,10 @@
     :buttons 'set-buttons!
     :stylesheets 'set-stylesheets!
     :on-action 'set-on-action!
-    ;;:extra nil
     (symbol (str ".set" (camel-case (name kw) true)))))
 
 (defn accum-kvps*
-  "Process and accumulate key-value pairs, expanding anything inside an :extra clause"
+  "Process and accumulate key-value pairs"
   [ks]
   (loop [kvps ks
          out '()]
@@ -537,8 +542,7 @@
         (let [[k v] (first kvps) ;; grab next key-value pair
               prockw (process-keyword* k)] ;; figure out what it needs to be
           (if (symbol? prockw) ;; pretty much always true
-            (recur (rest kvps) (conj out (list prockw v))) ;; list adds parens to .setWhatever
-            (recur (rest kvps) (concat out v))))))) 
+            (recur (rest kvps) (conj out (list prockw v))))))))  ;; list adds parens to .setWhatever
 
 (defmacro jfxnew
   "Makes any new object of klass, passing constructor values and
@@ -587,14 +591,14 @@
       `(doto (new ~klass ~@static-arg)
          ~@(accum-kvps* kvps)))))
 
-(defmacro jfx-button
+#_(defmacro jfx-button
   "Shortcut for (jfxnew Button name :on-action (event-handler [evt]
   body)).  The event variable evt is available inside the function
   body."
   [name & body]
   `(jfxnew javafx.scene.control.Button ~name :on-action (event-handler [evt] ~@body)))
 
-(defmacro jfx-menuitem
+#_(defmacro jfx-menuitem
   "Shortcut for (jfxnew menuitem name :on-action (event-handler [evt]
   body)).  The event variable evt is available inside the function
   body."
@@ -1199,7 +1203,7 @@ No need to provide 'this' argument as the macro does this."
   (app-init)
   (println "I'm a library.  Don't run me.")
   
-  (let [button (jfxnew javafx.scene.control.Button "Okay"
+  #_(let [button (jfxnew javafx.scene.control.Button "Okay"
                        :on-action (event-handler [evt]
                                                  (javafx.application.Platform/exit)))
         bp (jfxnew javafx.scene.layout.BorderPane
