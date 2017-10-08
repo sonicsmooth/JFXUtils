@@ -1,27 +1,11 @@
 (ns jfxutils.core
-  (:require [clojure.string  :as s])
-  (:use [clojure repl pprint reflect set]
-        [clojure.java.io :as io])
-  (:import   (com.sun.javafx.stage StageHelper)
-             (java.io PrintWriter)
-             (java.net URL URI )
-             (javafx.application Platform)
-             (javafx.animation RotateTransition Animation Interpolator)
-             (javafx.beans.property ReadOnlyIntegerProperty)
-             (javafx.beans.value ChangeListener ObservableValue)
-             (javafx.collections FXCollections)
-             (javafx.event ActionEvent EventHandler)
-             (javafx.geometry Insets)
-             (javafx.scene.control Button)
-             (javafx.scene Group Scene Node Parent)
-             (javafx.scene.shape Rectangle)
-             (javafx.scene.image Image ImageView)
-             (javafx.scene.layout BorderPane StackPane Background BackgroundFill CornerRadii)
-             (javafx.scene.paint LinearGradient Stop CycleMethod Color)
-             (javafx.stage Stage)
-             (javafx.util Duration )
-             (java.nio.file Paths Path)
-             (javafx.fxml FXMLLoader))
+  (:require [clojure.string  :refer [capitalize join split]]
+            [clojure.java.io :refer [resource]]
+            [clojure.pprint :refer [pprint print-table]]
+            [clojure.reflect :refer [reflect]]
+            [clojure.set :refer [difference intersection union]])
+  (:import [javafx.stage Stage]
+           [javafx.scene Scene])
   (:gen-class))
 
 (println "---")
@@ -71,7 +55,8 @@
   ;; Sets value of implicit exit
   [exit?]
   ;;(println "Implicit exit set to:" exit?)
-  (javafx.application.Platform/setImplicitExit exit?))
+  (javafx.application.Platform/setImplicitExit exit?)
+  (de.codecentric.centerdevice.javafxsvg.SvgImageLoaderFactory/install)) ;; allows us to use SVG files in JavaFX
 
 (when (debug?)
   (println "jvm-opt init-toolkit:" (init-toolkit?))
@@ -104,21 +89,21 @@
           compile? *compile-files*
           killfn  (fn []
                     (when (debug?)
-                      (println "Watchdog thread started"))
+                      (println "Watchdog thread started")
+                      (println "In thread *compile-files* =" compile?))
                     (let [now (System/currentTimeMillis)]
                       (while (and (< (- (System/currentTimeMillis) now)
                                      (timeout))
                                   @bgrunning)
                         (Thread/sleep 100)))
                     ;; Override auto-terminate=false if compiling
-                    (when (debug?)
-                      (println "In thread *compile-files* =" compile?))
+
                     (when (and (debug?) compile?)
-                      (println "Killing application thread because compiling"))
+                      (println "Killing FX thread because compiling"))
                     (when (and (debug?)
                                @bgrunning
                                (auto-terminate?))
-                      (println "Killing application thread because auto-terminate"))
+                      (println "Killing FX thread because auto-terminate"))
                     (when (or compile?
                               (and @bgrunning
                                    (auto-terminate?)))
@@ -158,7 +143,7 @@
 (defn resource-path
   "Returns Path object of location specified by string s"
   [s]
-  (Paths/get (.toURI (clojure.java.io/resource s))))
+  (java.nio.file.Paths/get (.toURI (clojure.java.io/resource s))))
 
 (defn last-path
   "Returns last part of path, itself a path"
@@ -171,10 +156,10 @@
 (defn path
   "Returns locator as java.nio.files.Path object.  Locator is string, URI, or URL."
   [locator]
-  (cond (instance? Path locator) locator
-        (instance? String locator) (Paths/get locator (into-array String []))
-        (instance? URI locator) (Paths/get (str "file://" locator))
-        (instance? URL locator) (path (.getPath locator))))
+  (cond (instance? java.nio.file.Path locator) locator
+        (instance? String locator) (java.nio.file.Paths/get locator (into-array String []))
+        (instance? java.net.URI locator) (java.nio.file.Paths/get (str "file://" locator))
+        (instance? java.net.URL locator) (path (.getPath locator))))
 
 (defn run-later*
   "Returns nil"
@@ -201,13 +186,13 @@
   `(run-now* (fn [] ~@body)))
 
 (defn capitalize-words [words]
-  (map s/capitalize words))
+  (map clojure.string/capitalize words))
 
 (defn capitalize-rest-words [words]
   (cons (first words) (capitalize-words (rest words))))
 
 (defn split-hyph [txt]
-  (s/split txt #"-"))
+  (clojure.string/split txt #"-"))
 
 (defn join-hyph
   "Join non-nil args (presumably string) with hypen."
@@ -220,8 +205,8 @@
    (camel-case txt false))
   ([txt capitalize-first?]
    (if capitalize-first?
-     (->> txt split-hyph capitalize-words s/join)
-     (->> txt split-hyph capitalize-rest-words s/join))))
+     (->> txt split-hyph capitalize-words clojure.string/join)
+     (->> txt split-hyph capitalize-rest-words clojure.string/join))))
 
 ;; Need to fix these to use reflection, so special cases are not
 ;; needed.  Somehow must determine which properties are observable
@@ -377,10 +362,11 @@
 
 
 (defn linear-gradient [x0 y0 x1 y1 proportional cycle & stops]
-  (let [stopslist (map #(Stop. %1 %2) (range (count stops)) stops)]
-    (LinearGradient. (double x0) (double y0) (double x1) (double y1)
-                     proportional cycle
-                     (into-array stopslist))))
+  (let [stopslist (map #(javafx.scene.paint.Stop. %1 %2) (range (count stops)) stops)]
+    (javafx.scene.paint.LinearGradient.
+     (double x0) (double y0) (double x1) (double y1)
+     proportional cycle
+     (into-array stopslist))))
 
 (defn all-in?
   "Returns true only if all items in set keys are in set s"
@@ -520,26 +506,26 @@
   [obj]
   (let [c (constructors obj)
         fc (filter #(contains? (:flags %) :varargs) c)]
-    (if (empty? fc) false true)))
+    (not (empty? fc))))
 
 (defn process-keyword*
   "Verifies kw arg, and returns symbol for adding children or columns.
   Otherwise, returns symbol for setting property.  Throws exception if
   arg is not keyword."
   [kw]
-  (when (not (keyword? kw)) (throw (Exception. "Supplied key must be keyword")))
+  (when (not (keyword? kw))
+    (throw (Exception. "Supplied key must be keyword")))
   (condp = kw ;; should be consistent with set- or add- !
     :children  'set-children!
-    :menus  'set-menus!
+    :menus 'set-menus!
     :items 'set-items!
     :columns 'set-columns!
     :tabs 'set-tabs!
     :transforms 'set-transforms!
     :buttons 'set-buttons!
     :stylesheets 'set-stylesheets!
-    :extra nil
-    ;; make ".setCamelCaseWhatever" symbol
-    ;;:else
+    :on-action 'set-on-action!
+    ;;:extra nil
     (symbol (str ".set" (camel-case (name kw) true)))))
 
 (defn accum-kvps*
@@ -550,7 +536,7 @@
     (if (empty? kvps) out ;; finished, return accumulated symbols
         (let [[k v] (first kvps) ;; grab next key-value pair
               prockw (process-keyword* k)] ;; figure out what it needs to be
-          (if (symbol? prockw)
+          (if (symbol? prockw) ;; pretty much always true
             (recur (rest kvps) (conj out (list prockw v))) ;; list adds parens to .setWhatever
             (recur (rest kvps) (concat out v))))))) 
 
@@ -602,11 +588,18 @@
          ~@(accum-kvps* kvps)))))
 
 (defmacro jfx-button
-"Shortcut for (jfxnew Button name :on-action (event-handler [evt]
+  "Shortcut for (jfxnew Button name :on-action (event-handler [evt]
   body)).  The event variable evt is available inside the function
   body."
   [name & body]
-  `(jfxnew Button ~name :on-action (event-handler [evt] ~@body)))
+  `(jfxnew javafx.scene.control.Button ~name :on-action (event-handler [evt] ~@body)))
+
+(defmacro jfx-menuitem
+  "Shortcut for (jfxnew menuitem name :on-action (event-handler [evt]
+  body)).  The event variable evt is available inside the function
+  body."
+  [name & body]
+  `(jfxnew javafx.scene.control.MenuItem ~name :on-action (event-handler [evt] ~@body)))
 
 (defmacro event-handler
   "Returns new instance of object that implements EventHandler interface.
@@ -688,9 +681,9 @@ No need to provide 'this' argument as the macro does this."
          output-stream (proxy [java.io.OutputStream] []
                          (write [buf offset length] ;; buf is bytes[] of 8192 long
                            (.appendText ta (String. (byte-array (take length buf))))))
-         print-writer (PrintWriter. output-stream true)
+         print-writer (java.io.PrintWriter. output-stream true)
          label (javafx.scene.control.Label.)
-         scene (Scene. (jfxnew BorderPane ta :bottom label))
+         scene (Scene. (jfxnew javafx.scene.layout.BorderPane ta :bottom label))
          dimprint (fn [w h & args] (str "Width: " w ", Height: " h ", "  args))
          linecount (fn [] (count (clojure.string/split (.getText ta) #"\n")))
          status-bar-update (fn [] (run-later (.setText label (dimprint
@@ -751,9 +744,11 @@ No need to provide 'this' argument as the macro does this."
      ;; Make a blank window with the given width and height
      ;; Window only shows immediately if we're not in the FX thread
      ;;(println "HERE 1!!!!!!!!")
-     (if (Platform/isFxApplicationThread)
-       (jfxnew Stage :width width, :height height)
-       (run-now (doto (jfxnew Stage :width width, :height height) .show)))))
+     (if (javafx.application.Platform/isFxApplicationThread)
+       (jfxnew javafx.stage.Stage
+               :width width, :height height)
+       (run-now (doto (jfxnew javafx.stage.Stage
+                              :width width, :height height) .show)))))
 
   javafx.scene.Scene ;; used for Scene window of specified or unspecified size
   (stage
@@ -762,14 +757,14 @@ No need to provide 'this' argument as the macro does this."
      ;; unspecified.  Window only shows immediately if we're not in
      ;; the FX thread.
      ;;(println "HERE 2!!!!!!!!")
-     (if (Platform/isFxApplicationThread)
+     (if (javafx.application.Platform/isFxApplicationThread)
        (jfxnew Stage :scene scene)
        (run-now (doto (jfxnew Stage :scene scene) .show))))
     ([scene [width height]]
      ;; Make a window with the given scene, width, and height 
      ;; Window only shows immediately if we're not in the FX thread
      ;;(println "HERE 3!!!!!!!!")
-     (if (Platform/isFxApplicationThread)
+     (if (javafx.application.Platform/isFxApplicationThread)
        (jfxnew Stage :width width, :height height :scene scene)
        (run-now (doto (jfxnew Stage :width width, :height height, :scene scene) .show)))))
   
@@ -783,7 +778,7 @@ No need to provide 'this' argument as the macro does this."
      ;;(println "HERE 4!!!!!!!!")
      (if (has-parent? (class node) javafx.scene.Parent)
        (stage (Scene. node))
-       (stage (Scene. (StackPane. [node]))))) 
+       (stage (Scene. (javafx.scene.layout.StackPane. (into-array [node])))))) 
     ([node [width height]]
      ;; Check if node can be put directly in scene, ie whether it
      ;; derives from Parent.  Put it in a StackPane if not. Typically
@@ -791,8 +786,11 @@ No need to provide 'this' argument as the macro does this."
      ;; size specification once we have a Scene.
      ;;(println "HERE 5!!!!!!!!")
      (if (has-parent? (class node) javafx.scene.Parent)
-       (stage (Scene. node) [width height]) ;; calls 2-arg Scene version with size
-       (stage (Scene. (StackPane. [node])) [width height]))))) ;; calls 2-arg Scene version with size
+       (stage (Scene. node)
+              [width height]) ;; calls 2-arg Scene version with size
+       (stage (Scene.
+               (javafx.scene.layout.StackPane. (into-array [node])))
+              [width height]))))) ;; calls 2-arg Scene version with size
 
 
 (defn select-values [map keyseq]
@@ -806,12 +804,6 @@ No need to provide 'this' argument as the macro does this."
      (print ~(str exp ":") s#)
      (flush)
      exp-val#))
-
-(defn observable
-  "Returns ObservableArrayList version of argument"
-  [coll]
-  (FXCollections/observableArrayList (to-array coll)))
-
 
 #_(defn uni-bind!
   ;; Create a one-way binding from Property to var via a
@@ -834,14 +826,13 @@ No need to provide 'this' argument as the macro does this."
     (catch Exception e
       (.printStackTrace e *out*))))
 
-(defn countstack []
+#_(defn countstack []
   (try
     (throw (Exception. ""))
     (catch Exception e (count (.getStackTrace e)))))
 
 
-
-(defmacro jfxmodify
+#_(defmacro jfxmodify
   "Modifies node with args, where args is a sequence of key-value
   pairs such as those passed to jfxnew."
   [node & args]
@@ -881,7 +872,7 @@ No need to provide 'this' argument as the macro does this."
   outside the bounds.  This is mostly used for Pane.  Taken from
   http://news.kynosarges.org/2016/11/03/javafx-pane-clipping/"
   [^javafx.scene.Node node]
-  (let [clip (Rectangle.)]
+  (let [clip (javafx.scene.shape.Rectangle.)]
     (.setClip node clip)
     (add-listener! node :layout-bounds
                    (change-listener [ov nv]
@@ -1012,41 +1003,46 @@ No need to provide 'this' argument as the macro does this."
   "Closes/hides windows.  Assumes implicit exit has been set properly
   for desired behavior"
   []
-  (doseq [stage (StageHelper/getStages)]
+  (doseq [stage (com.sun.javafx.stage.StageHelper/getStages)]
     (.close stage)))
 
 (defn get-stages
 "Returns all top windows (aka Stages)"
   []
-  (StageHelper/getStages))
+  (com.sun.javafx.stage.StageHelper/getStages))
 
 
 (def default-icon-size 16)
 (defn image [s]
-  (Image. s))
+  (javafx.scene.image.Image. s))
 
 (defn image-view
   "Icon is either a path string or Path object to a suitable image
   file, or an existing Image instance."
-  [icon & [size]]
-  (when icon
-    (let [iv (cond (string? icon) (ImageView. (Image. icon)) ;; Image ctor takes a String
-                   ;; This branch (using Path) is broken                
-                   (instance? Path icon) (ImageView. (Image. (str icon))) ;; Image ctor takes a String
-                   (instance? Image icon) (ImageView. icon))]
-      (when size
-        (.setFitWidth iv default-icon-size)
-        (.setFitHeight iv default-icon-size))
-      iv)))
+  ([icon]
+   (cond (string? icon) (javafx.scene.image.ImageView.
+                         (javafx.scene.image.Image. icon)) ;; Image ctor takes a String
+
+         ;; This branch (using Path) is broken                
+         (instance? java.nio.file.Path icon)
+         (javafx.scene.image.ImageView.
+          (javafx.scene.image.Image. (str icon))) ;; Image ctor takes a String
+
+         (instance? javafx.scene.image.Image icon)
+         (javafx.scene.image.ImageView. icon)))
+  ([icon size]
+   (doto (image-view icon)
+     (.setFitWidth default-icon-size)
+     (.setFitHeight default-icon-size))))
 
 (defn simple-vert-gradient
   "Creates a stretched vertical gradient with two colors"
   [c1 c2]
-  (linear-gradient 0 0 0 1 true CycleMethod/NO_CYCLE c1 c2 ))
+  (linear-gradient 0 0 0 1 true javafx.scene.paint.CycleMethod/NO_CYCLE c1 c2 ))
 (defn simple-horiz-gradient
   "Creates a stretched horizontal gradient with two colors"
   [c1 c2]
-  (linear-gradient 0 0 1 0 true CycleMethod/NO_CYCLE c1 c2 ))
+  (linear-gradient 0 0 1 0 true javafx.scene.paint.CycleMethod/NO_CYCLE c1 c2 ))
 
 (defn gradient-background
   "Makes smooth background with two colors."
@@ -1054,14 +1050,15 @@ No need to provide 'this' argument as the macro does this."
   (let [grad (condp = direction
                  :vertical (simple-vert-gradient color1 color2)
                  :horizontal (simple-horiz-gradient color1 color2))]
-    (Background. (into-array
-                  [(BackgroundFill. grad nil nil)]))))
+    (javafx.scene.layout.Background. (into-array
+                  [(javafx.scene.layout.BackgroundFill. grad nil nil)]))))
 
 (defn background
   "Makes a background with one or two colors. If two colors are
   provided, makes a vertical gradient."
   ([color]
-   (Background. (into-array [(BackgroundFill. color nil nil)])))
+   (javafx.scene.layout.Background.
+    (into-array [(javafx.scene.layout.BackgroundFill. color nil nil)])))
   ([color1 color2]
    (gradient-background :vertical color1 color2)
    ))
@@ -1106,16 +1103,15 @@ No need to provide 'this' argument as the macro does this."
 (defn animated-wait
   "Creates a rotating rectangle."
   []
-  (let [rect (jfxnew Rectangle 100 100 :fill Color/RED)
+  (let [rect (jfxnew javafx.scene.shape.Rectangle 100 100 :fill javafx.scene.paint.Color/RED)
         rotator (jfxnew
-                 RotateTransition (Duration. 1000) rect
+                 javafx.animation.RotateTransition (javafx.util.Duration. 1000) rect
                  :to-angle 180
                  :auto-reverse false
-                 :cycle-count Animation/INDEFINITE
-                 :interpolator Interpolator/LINEAR)]
+                 :cycle-count javafx.animation.Animation/INDEFINITE
+                 :interpolator javafx.animation.Interpolator/LINEAR)]
     (.play rotator)
     rect))
-
 
 (defn uuid
   "Generates new random string"
@@ -1177,8 +1173,8 @@ No need to provide 'this' argument as the macro does this."
   ([node id direction]
    (let [full-id (str "#" id)]
      (cond
-       (instance? javafx.stage.Stage node) (.lookup (.getScene node) full-id)
-       (instance? javafx.scene.Scene node) (.lookup node full-id)
+       (instance? Stage node) (.lookup (.getScene node) full-id)
+       (instance? Scene node) (.lookup node full-id)
        :else (if-let [scene (.getScene node)]
                (condp = direction
                  :up (.lookup scene full-id)
@@ -1191,7 +1187,7 @@ No need to provide 'this' argument as the macro does this."
 
 
 (defn load-fxml-root [fxml-filename]
-  (FXMLLoader/load (io/resource fxml-filename)))
+  (javafx.fxml.FXMLLoader/load (clojure.java.io/resource fxml-filename)))
 
 
 
@@ -1203,13 +1199,13 @@ No need to provide 'this' argument as the macro does this."
   (app-init)
   (println "I'm a library.  Don't run me.")
   
-  (let [button (jfxnew Button "Okay"
+  (let [button (jfxnew javafx.scene.control.Button "Okay"
                        :on-action (event-handler [evt]
                                                  (javafx.application.Platform/exit)))
-        bp (jfxnew BorderPane
+        bp (jfxnew javafx.scene.layout.BorderPane
                    :center (javafx.scene.text.Text. "I'm a library.\nDon't run me")
                    :bottom button)]
-    (BorderPane/setAlignment button javafx.geometry.Pos/CENTER)
+    (javafx.scene.layout.BorderPane/setAlignment button javafx.geometry.Pos/CENTER)
 
     (stage bp)))
 
