@@ -282,6 +282,27 @@
   [node body]
   `(.setOnAction ~node (event-handler [~'event] (~@body))))
 
+(defmacro set-on-key-pressed!
+  ;; Evaluates to (.setOnAction node (event-handler [event] body)
+  ;; body is run when the action occurs.  The body has access to
+  ;; the event
+  [node body]
+  `(.setOnKeyPressed ~node (event-handler [~'event] (~@body))))
+
+(defmacro set-on-key-released!
+  ;; Evaluates to (.setOnAction node (event-handler [event] body)
+  ;; body is run when the action occurs.  The body has access to
+  ;; the event
+  [node body]
+  `(.setOnKeyReleased ~node (event-handler [~'event] (~@body))))
+
+(defmacro set-on-key-typed!
+  ;; Evaluates to (.setOnAction node (event-handler [event] body)
+  ;; body is run when the action occurs.  The body has access to
+  ;; the event
+  [node body]
+  `(.setOnKeyTyped ~node (event-handler [~'event] (~@body))))
+
 (defn set-list!
   "Sets list specified by which-list keyword to items seq.  Returns
   whatever .setAll returns."
@@ -531,6 +552,9 @@
     :buttons 'set-buttons!
     :stylesheets 'set-stylesheets!
     :on-action 'set-on-action!
+    :on-key-pressed 'set-on-key-pressed!
+    :on-key-released 'set-on-key-released!
+    :on-key-typed 'set-on-key-typed!
     (symbol (str ".set" (camel-case (name kw) true)))))
 
 (defn accum-kvps*
@@ -649,24 +673,39 @@
     `(.removeListener (~propname ~node) ~listener)))
 
 (defn add-event-filter!
-  "Adds event handler to a node for an event. You can create an
-  EventHandler with (event-handler [evt] bla bla).  This function
-  incldude for consistency/completeness, although invoking the javafx
-  function directly would be shorter."
-  [node evt handler]
-  (.addEventFilter node evt handler))
+  "Adds event filter to a node. Event is a fully named event such as
+  MouseEvent/MOUSE_CLICKED.  You can create an EventHandler
+  with the macro (event-handler [evt] bla bla)."
+  [node event handler]
+  (.addEventFilter node event handler))
 
-(defmacro set-event-handler!
-  "Sets event handler"
+(defn add-event-handler!
+  "Adds event handler to a node. Event is a fully named event such as
+  MouseEvent/MOUSE_CLICKED.  You can create an EventHandler
+  with the macro (event-handler [evt] bla bla)."
+  [node event handler]
+  (.addEventHandler node event handler))
+
+(defn remove-event-filter!
+  "Removes event filter from a node. Event is a fully named event such
+  as MouseEvent/MOUSE_CLICKED."
+  [node event handler]
+  (.removeEventFilter node event handler))
+
+(defn remove-event-handler!
+  "Removes event handler from a node. Event is a fully named event
+  such as MouseEvent/MOUSE_CLICKED."
+  [node event handler]
+  (.removeEventHandler node event handler))
+
+(defmacro set-on-event-handler!
+  "Sets event handler property for some events, such as
+  onMouseClicked, etc.  event is the colonized property name, such
+  as :mouse-clicked (does not have \"on\" in the name).  Remove the
+  handler by calling this macro with nil as the handler argument."
   [node event handler]
   (let [setfn (symbol (camel-case (str ".set-on-" (name event))))]
     `(~setfn ~node ~handler)))
-
-(defmacro set-button-handler!
-  "Sets event handler on button's action event. Pass the event name as
-  arg, eg (set-event-handler! MyButton [evt] (println evt))"
-  [node [evt] & args]
-  `(set-event-handler! ~node :action (event-handler [~evt] ~@args)))
 
 (defmacro callback 
   "Reifies the callback interface
@@ -738,11 +777,11 @@ No need to provide 'this' argument as the macro does this."
   from outside the FX Thread, then a new Stage is created, displayed,
   and returned.  If this is called from within the FX Thread, then the
   Stage is created and returned, but not displayed."
-  (stage [arg0] [arg0 arg1]))
+  (^javafx.stage.Stage stage [arg0] [arg0 arg1]))
 
 (extend-protocol StageProtocol
   java.lang.Long ;; used for empty window of specified size
-  (stage
+  (^javafx.stage.Stage stage
     ([num0] (throw (Exception. "Must pass width and height to (window ...)")))
     ([width height]
      ;; Make a blank window with the given width and height
@@ -755,7 +794,7 @@ No need to provide 'this' argument as the macro does this."
                               :width width, :height height) .show)))))
 
   javafx.scene.Scene ;; used for Scene window of specified or unspecified size
-  (stage
+  (^javafx.stage.Stage stage
     ([scene]
      ;; Make a window with the given scene, leaving width and height
      ;; unspecified.  Window only shows immediately if we're not in
@@ -773,7 +812,7 @@ No need to provide 'this' argument as the macro does this."
        (run-now (doto (jfxnew Stage :width width, :height height, :scene scene) .show)))))
   
   javafx.scene.Node ;; used for Node window of specified or unspecified size
-  (stage
+  (^javafx.stage.Stage stage
     ([node]
      ;; Check if node can be put directly in scene, ie whether it
      ;; derives from Parent.  Put it in a Group if not, typically a
@@ -1024,13 +1063,14 @@ No need to provide 'this' argument as the macro does this."
   "Icon is either a path string or Path object to a suitable image
   file, or an existing Image instance."
   ([icon]
-   (cond (string? icon) (javafx.scene.image.ImageView.
-                         (javafx.scene.image.Image. icon)) ;; Image ctor takes a String
+   (cond (string? icon)
+         (-> icon javafx.scene.image.Image. javafx.scene.image.ImageView.)
 
-         ;; This branch (using Path) is broken                
          (instance? java.nio.file.Path icon)
-         (javafx.scene.image.ImageView.
-          (javafx.scene.image.Image. (str icon))) ;; Image ctor takes a String
+         (-> icon .toUri .toString javafx.scene.image.Image. javafx.scene.image.ImageView.)
+         
+         (instance? java.io.File icon)
+         (-> icon .toURL .toString javafx.scene.image.Image. javafx.scene.image.ImageView.)
 
          (instance? javafx.scene.image.Image icon)
          (javafx.scene.image.ImageView. icon)))
@@ -1203,9 +1243,8 @@ No need to provide 'this' argument as the macro does this."
   (app-init)
   (println "I'm a library.  Don't run me.")
   
-  #_(let [button (jfxnew javafx.scene.control.Button "Okay"
-                       :on-action (event-handler [evt]
-                                                 (javafx.application.Platform/exit)))
+  (let [button (jfxnew javafx.scene.control.Button "Okay"
+                       :on-action (javafx.application.Platform/exit))
         bp (jfxnew javafx.scene.layout.BorderPane
                    :center (javafx.scene.text.Text. "I'm a library.\nDon't run me")
                    :bottom button)]
