@@ -6,9 +6,15 @@
             [clojure.set :refer [difference intersection union]])
   (:import [javafx.stage Stage]
            [javafx.scene Scene])
-  (:gen-class))
+
+  (:gen-class
+   :prefix ""
+   :methods [^:static [app_init [] Void ]]))
 
 (println "---")
+
+(set! *warn-on-reflection* false)
+(set! *unchecked-math* :false)
 
 (defn nopt-opt?
   ;; Returns false only if java option is "false", true otherwise.
@@ -208,6 +214,24 @@
    (if capitalize-first?
      (->> txt split-hyph capitalize-words clojure.string/join)
      (->> txt split-hyph capitalize-rest-words clojure.string/join))))
+
+
+(defn index-of
+  "Returns the index of the first occurence of search"
+  [seq search]
+  (loop [n 0
+         seq seq]
+    (if (empty? seq)
+      nil
+      (if (= (first seq) search)
+        n
+        (recur (inc n) (rest seq))))))
+
+(defn replace-item
+  "Finds the first occurence of search and replaces it with replace"
+  [seq search replace]
+  (when-let [idx (index-of seq search)]
+    (assoc seq idx replace)))
 
 ;; Need to fix these to use reflection, so special cases are not
 ;; needed.  Somehow must determine which properties are observable
@@ -615,19 +639,6 @@
       `(doto (new ~klass ~@static-arg)
          ~@(accum-kvps* kvps)))))
 
-#_(defmacro jfx-button
-  "Shortcut for (jfxnew Button name :on-action (event-handler [evt]
-  body)).  The event variable evt is available inside the function
-  body."
-  [name & body]
-  `(jfxnew javafx.scene.control.Button ~name :on-action (event-handler [evt] ~@body)))
-
-#_(defmacro jfx-menuitem
-  "Shortcut for (jfxnew menuitem name :on-action (event-handler [evt]
-  body)).  The event variable evt is available inside the function
-  body."
-  [name & body]
-  `(jfxnew javafx.scene.control.MenuItem ~name :on-action (event-handler [evt] ~@body)))
 
 (defmacro event-handler
   "Returns new instance of object that implements EventHandler interface.
@@ -647,6 +658,17 @@
   [arg & body]
   `(reify javafx.beans.value.ChangeListener
      (~'changed [~'this ~'observable ~@arg] ~@body)))
+
+(defmacro invalidation-listener
+  "Creates anonymous implementation of InvalidationListener.
+  Body is the function to be executed when change occurs. The
+  variables 'this' and 'observable' are available in the function
+  body."
+  [& body]
+  `(reify javafx.beans.InvalidationListener
+     (~'invalidated [~'this ~'observable] ~@body)))
+
+
 
 (defmacro add-listener!*
   "Adds listener to property of node.  property must be
