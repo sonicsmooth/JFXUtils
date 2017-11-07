@@ -3,7 +3,8 @@
             [clojure.java.io :refer [resource]]
             [clojure.pprint :refer [pprint print-table]]
             [clojure.reflect :refer [reflect]]
-            [clojure.set :refer [difference intersection union]])
+            [clojure.set :refer [difference intersection union]]
+            [clojure.stacktrace])
   (:import [javafx.stage Stage]
            [javafx.scene Scene])
 
@@ -652,12 +653,22 @@
 
 (defmacro change-listener
   "Creates anonymous implementation of ChangeListener.
-  arg must be vector of 2 variables: oldvalue, newvalue.  Body is the
-  function to be executed when change occurs. The variables 'this' and
-  'observable' are available in the function body."
-  [arg & body]
-  `(reify javafx.beans.value.ChangeListener
-     (~'changed [~'this ~'observable ~@arg] ~@body)))
+  If 'arg1' is a vector, then it must be a vector of two variables for
+  the old and new values, respectively.  In this case, args is
+  executed when the change occurs.  If 'arg1' is not a vector, then it
+  is assumed to be the body of the change fn, and the 'args' argument
+  is ignored.  In this case, the variables 'oldval' and 'newval' are
+  available in the fn body.  In both cases, the variables 'this' and
+  'observable' are also available in the fn body."
+  [arg1 & args]
+  (if (vector? arg1)
+    ;; Assume arg & body constitute the full change-listener definition
+    `(reify javafx.beans.value.ChangeListener
+       (~'changed [~'this ~'observable ~@arg1] ~@args))
+
+    ;; Otherwise, assume just a body in 'arg' and ignore the 'body' arg.
+    `(reify javafx.beans.value.ChangeListener
+       (~'changed [~'this ~'observable ~'oldval ~'newval] ~arg1))))
 
 (defmacro invalidation-listener
   "Creates anonymous implementation of InvalidationListener.
@@ -669,30 +680,47 @@
      (~'invalidated [~'this ~'observable] ~@body)))
 
 
-
 (defmacro add-listener!*
   "Adds listener to property of node.  property must be
-  keywordized-and-hyphenated JFX property, minus \"property\".  For
+  keywordized-and-hyphenated JFX property, minus 'property'.  For
   example to add a ChangeListener mylistener to myCoolProperty
   belonging to Node mynode you would say (add-listener!
   mynode :my-cool mylistener).  You can create a ChangeListener
-  with (change-listener a b c d)"
+  with (change-listener [oldval newval] body)"
   [node property listener]
   (let [propname (symbol (str "." (camel-case (name property)) "Property"))]
     `(.addListener (~propname ~node) ~listener)))
 
 (defn add-listener!
   "Adds listener to property of node.  Prop must evaluate to keyword
-  property.  Uses reflection."
-  [node property listener]
-  (let [prop (get-property node property)]
-    (.addListener prop listener)))
+  property.  Uses reflection.  listener must be an actual
+  ChangeListener, or a fn of two arguments.  If a fn, it will be
+  wrapped in a change listener object, and the old and new values will
+  be passed to the fn.  Returns listener."
+  [node property lstnorfn]
+  (let [prop (get-property node property)
+        listener (if (or (instance? javafx.beans.value.ChangeListener lstnorfn)
+                         (instance? javafx.beans.InvalidationListener lstnorfn))
+                   lstnorfn ;; use as-is
+                   (reify javafx.beans.value.ChangeListener ;; make a new one
+                     (changed [this observable oldval newval]
+                       (lstnorfn oldval newval))))]
+    (.addListener prop listener)
+    listener))
 
 (defmacro remove-listener!*
   "Removes listener.  Just for symmetry."
   [node property listener]
   (let [propname (symbol (str "." (camel-case (name property)) "Property"))]
     `(.removeListener (~propname ~node) ~listener)))
+
+(defn remove-listener!
+  "Removes listener from property of node.  Prop must evaluate to
+  keyword property.  Uses reflection."
+  [node property listener]
+  (let [prop (get-property node property)]
+    (.removeListener prop listener)))
+
 
 (defn add-event-filter!
   "Adds event filter to a node. Event is a fully named event such as
@@ -885,29 +913,19 @@ No need to provide 'this' argument as the macro does this."
                            (actionfn newval)
                            (when extra-fn (extra-fn)))))
 
-(defn showstack []
-  (try
-    (throw (Exception. ""))
-    (catch Exception e
-      (.printStackTrace e *out*))))
+(defn showstack
+  ([]
+   (showstack 0 0))
+  ([num]
+   (showstack 0 num))
+  ([skip num] ;; if num is zero, do all
+   (let [st (.getStackTrace (Thread/currentThread))
+         cnt (if (zero? num)
+               (count st)
+               (min num (count st)))]
+     (doseq [idx (range skip cnt)]
+       (println (aget st idx))))))
 
-#_(defn countstack []
-  (try
-    (throw (Exception. ""))
-    (catch Exception e (count (.getStackTrace e)))))
-
-
-#_(defmacro jfxmodify
-  "Modifies node with args, where args is a sequence of key-value
-  pairs such as those passed to jfxnew."
-  [node & args]
-  (let [[_unused_ kvpseq] (split-with #(not (keyword? %)) args)
-        kvps (partition 2 kvpseq)
-        sym  `(doto ~node 
-                ~@(accum-kvps* kvps))
-        me (macroexpand-1 sym)]
-    (println me)
-    sym))
 
 
 (defn make-draggable!
@@ -1274,4 +1292,8 @@ No need to provide 'this' argument as the macro does this."
 
     (stage bp)))
 
-
+(defn integer-slider [slider]
+  (add-listener! slider :value
+                 (change-listener [oldval newval]
+                                  (.set observable (Math/round newval))))
+  slider)
