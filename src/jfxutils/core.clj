@@ -203,7 +203,7 @@
   (clojure.string/split txt #"-"))
 
 (defn join-hyph
-  "Join non-nil args (presumably string) with hypen."
+  "Join non-nil args (presumably string) with hyphen."
   [& strs]
   (clojure.string/join "-" (remove nil? strs)))
 
@@ -568,18 +568,18 @@
   (when (not (keyword? kw))
     (throw (Exception. "Supplied key must be keyword")))
   (condp = kw ;; should be consistent with set- or add- !
-    :children  'set-children!
-    :menus 'set-menus!
-    :items 'set-items!
-    :columns 'set-columns!
-    :tabs 'set-tabs!
-    :transforms 'set-transforms!
-    :buttons 'set-buttons!
-    :stylesheets 'set-stylesheets!
-    :on-action 'set-on-action!
-    :on-key-pressed 'set-on-key-pressed!
-    :on-key-released 'set-on-key-released!
-    :on-key-typed 'set-on-key-typed!
+    :children  `set-children!
+    :menus `set-menus!
+    :items `set-items!
+    :columns `set-columns!
+    :tabs `set-tabs!
+    :transforms `set-transforms!
+    :buttons `set-buttons!
+    :stylesheets `set-stylesheets!
+    :on-action `set-on-action!
+    :on-key-pressed `set-on-key-pressed!
+    :on-key-released `set-on-key-released!
+    :on-key-typed `set-on-key-typed!
     (symbol (str ".set" (camel-case (name kw) true)))))
 
 (defn accum-kvps*
@@ -627,7 +627,9 @@
                        (butlast ctor-args)
                        ctor-args)
                      ctor-args)
-        var-arg (if var-ctor?
+        var-arg (when (and var-ctor? (sequential? (last ctor-args)))
+                  (last ctor-args))
+        #_var-arg #_(if var-ctor?
                   (if (sequential? (last ctor-args))
                     (last ctor-args)
                     nil)
@@ -668,7 +670,7 @@
 
     ;; Otherwise, assume just a body in 'arg' and ignore the 'body' arg.
     `(reify javafx.beans.value.ChangeListener
-       (~'changed [~'this ~'observable ~'oldval ~'newval] ~arg1))))
+       (~'changed [~'this ~'observable ~'oldval ~'newval] (do ~arg1 ~@args)))))
 
 (defmacro invalidation-listener
   "Creates anonymous implementation of InvalidationListener.
@@ -1269,11 +1271,29 @@ No need to provide 'this' argument as the macro does this."
                  (throw (Exception. "Must specify :down or no direction when node is not in scene graph."))
                  (lookup-children node id)))))))
 
+(defn multi-assoc-in
+  "Update-in multiple keyvec-value pairs, where the each keyvec is a
+  vec to pass to update-in."
+  [m & kvvp]
+  (assert (even? (count kvvp)))
+  (reduce #(apply assoc-in %1 %2) m (partition 2 kvvp)))
+
 
 (defn load-fxml-root [fxml-filename]
   (javafx.fxml.FXMLLoader/load (clojure.java.io/resource fxml-filename)))
 
-
+(defn clip
+  "Clips x (a number) to be within mn and mx.  If additional
+  arg :tellme is provided, x is returned as a vector when clipped. "
+  ([x mn mx]
+   (clip x mn mx nil))
+  ([x mn mx tellme]
+   (let [clipped-val (min (max x mn) mx)]
+     (if (and (= tellme :tellme)
+              (or (= clipped-val mn)
+                  (= clipped-val mx)))
+       [clipped-val]
+       clipped-val))))
 
 
 (defn -main [& args]
@@ -1292,8 +1312,25 @@ No need to provide 'this' argument as the macro does this."
 
     (stage bp)))
 
-(defn integer-slider [slider]
-  (add-listener! slider :value
-                 (change-listener [oldval newval]
-                                  (.set observable (Math/round newval))))
+(defn long-slider [slider]
+  (let [cl (change-listener [oldval newval]
+                            (.set observable (Math/round newval)))]
+    (add-listener! slider :value cl))
   slider)
+
+(defn double-slider [slider snap]
+  (let [cl (change-listener [oldval newval]
+                            (let [q (Math/round (/ newval snap))]
+                              (.set observable (* q snap))))]
+    (add-listener! slider :value cl))
+  slider)
+
+
+
+
+
+
+
+
+
+
