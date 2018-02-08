@@ -234,6 +234,14 @@
   (when-let [idx (index-of seq search)]
     (assoc seq idx replace)))
 
+(defmacro defmemo [fname strargs1 strargs2 & body]
+  "Creates memoized version of body.  Checks whether a string is
+  passed immediately after fname, in which case this string is
+  ignored."
+  (if (string? strargs1)
+    `(def ~fname (memoize (fn ~strargs2 ~@body)))
+    `(def ~fname (memoize (fn ~strargs1 ~strargs2 ~@body)))))
+
 ;; Need to fix these to use reflection, so special cases are not
 ;; needed.  Somehow must determine which properties are observable
 ;; lists vs. other properties such as Boolean or other.  Can also
@@ -765,7 +773,7 @@ Example: (callback [column] (blablabla)).
 No need to provide 'this' argument as the macro does this."
   [args & body]
   `(reify javafx.util.Callback
-     (~'call [this# ~@args]
+     (~'call [~'this ~@args]
        ~@body)))
 
 (defn console-scene
@@ -888,8 +896,8 @@ No need to provide 'this' argument as the macro does this."
               [width height]))))) ;; calls 2-arg Scene version with size
 
 
-(defn select-values [map keyseq]
-  (vals (select-keys map keyseq)))
+(def select-values
+  (comp vals select-keys))
 
 (defmacro printexp
   "Allows quick printing of expression literal and their evaluated value"
@@ -899,6 +907,17 @@ No need to provide 'this' argument as the macro does this."
      (print ~(str exp ":") s#)
      (flush)
      exp-val#))
+
+(defn keydiff
+  "Returns true if any of new-map's values are different from
+  old-map's, using keys to access, nil otherwise.  If keys is nested
+  map, then uses get-in."
+  [old-map new-map keys]
+  (let [mapfn (fn [k]
+                (if (vector? k)
+                  (not= (get-in old-map k) (get-in new-map k))
+                  (not= (get    old-map k) (get    new-map k))))]
+    (some identity (map mapfn keys))))
 
 #_(defn uni-bind!
   ;; Create a one-way binding from Property to var via a
@@ -1124,10 +1143,15 @@ No need to provide 'this' argument as the macro does this."
 (defn simple-vert-gradient
   "Creates a stretched vertical gradient with two colors"
   [c1 c2]
+  (when (or (nil? c1) (nil? c2))
+    (throw (IllegalArgumentException. "Color must not be nil")))
   (linear-gradient 0 0 0 1 true javafx.scene.paint.CycleMethod/NO_CYCLE c1 c2 ))
+
 (defn simple-horiz-gradient
   "Creates a stretched horizontal gradient with two colors"
   [c1 c2]
+  (when (or (nil? c1) (nil? c2))
+    (throw (IllegalArgumentException. "Color must not be nil")))
   (linear-gradient 0 0 1 0 true javafx.scene.paint.CycleMethod/NO_CYCLE c1 c2 ))
 
 (defn gradient-background
@@ -1204,9 +1228,11 @@ No need to provide 'this' argument as the macro does this."
   []
   (str (java.util.UUID/randomUUID)))
 
-(defn subnodes
+
+(defmemo subnodes
   "Returns a node's subnodes, such as children or items.  Returns nil
-  if none found.  Uses reflection, so it's probably slow."
+  if none found.  Uses reflection, so it's probably slow.  With
+  memoization, presumes scene graph is static."
   [node]
   (let [klass (class node)]
     (if-let [method (or (try (.getMethod klass "getChildren" nil)
@@ -1216,6 +1242,17 @@ No need to provide 'this' argument as the macro does this."
                         (try (.getMethod klass "getButtons" nil)
                              (catch NoSuchMethodException e))
                         (try (.getMethod klass "getContent" nil)
+                             (catch NoSuchMethodException e))
+                        ;; finds nodes in a Labeled's graphicProperty,
+                        ;; ie will find stuff in the header portion of
+                        ;; a TitledPane, in addition to the getContent
+                        ;; finding the actual content of the
+                        ;; TitledPane.  Actually this won't since
+                        ;; it'll find getContent first.  Todo -- build
+                        ;; up a list of subnodes when both getContent
+                        ;; and getGraphic, or any of the others, are
+                        ;; present
+                        #_(try (.getMethod klass "getGraphic" nil) 
                              (catch NoSuchMethodException e)))]
       ;; Force result to be a list of some sort
       (let [result (.invoke method node nil)]
@@ -1223,7 +1260,7 @@ No need to provide 'this' argument as the macro does this."
              (catch IllegalArgumentException e
                [result]))))))
 
-(defn dfs-search
+(defmemo dfs-search
   ;;Depth first search.  Goal is value to look for.  Node is node that
   ;;contains one ore more values.  Getsubs returns next list of nodes.
   ;;getval returns value for a given node.
@@ -1238,14 +1275,14 @@ No need to provide 'this' argument as the macro does this."
                       (recur (rest nodes)))))))]
     (inner-search node)))
 
-(defn lookup-children
+(defmemo lookup-children
   "Does 'manual' lookup of chidren.  Used when node is not in Scene
   graph."
   [node id]
   (if (= (.getId node) id) node
       (dfs-search node id #(.getId %))))
 
-(defn lookup
+(defmemo lookup
   "Lookup up a node with id string starting at Node node.  If
   direction is omitted, or :down, looks down the scene graph
   hierarchy.  If direction is :up, finds parent Scene first, then
@@ -1271,6 +1308,27 @@ No need to provide 'this' argument as the macro does this."
                  (throw (Exception. "Must specify :down or no direction when node is not in scene graph."))
                  (lookup-children node id)))))))
 
+(defn idvalid? [id-string]
+  "Returns true if id is a proper name"
+  (and (not (empty? id-string)) ;; captures both nil and ""
+       (not (.startsWith id-string "arrow"))))
+
+(defmemo recurse-named-nodes [node]
+  "Return flattened list of all named subnodes of node"
+  (letfn [(inner-dump [n]
+            (let [id (.getId n)
+                  idvalid (idvalid? id)
+                  children (subnodes n)
+                  get-child-ids #(remove nil? (map inner-dump children))]
+              (cond
+                (and (not idvalid) (nil? children)) nil
+                (and (not idvalid) children) (get-child-ids)
+                (and idvalid (nil? children)) id
+                (and idvalid children) (cons id (get-child-ids)))))]
+    (flatten (inner-dump node))))
+
+
+
 (defn multi-assoc-in
   "Update-in multiple keyvec-value pairs, where the each keyvec is a
   vec to pass to update-in."
@@ -1295,22 +1353,10 @@ No need to provide 'this' argument as the macro does this."
        [clipped-val]
        clipped-val))))
 
-
-(defn -main [& args]
-  ;; In repl, auto-termination is automatically disabled.
-  ;; When not in repl (lein run, java -jar jfxutils.jar, etc)
-  ;; the auto-termination must be disabled by the application.
-  (app-init)
-  (println "I'm a library.  Don't run me.")
-  
-  (let [button (jfxnew javafx.scene.control.Button "Okay"
-                       :on-action (javafx.application.Platform/exit))
-        bp (jfxnew javafx.scene.layout.BorderPane
-                   :center (javafx.scene.text.Text. "I'm a library.\nDon't run me")
-                   :bottom button)]
-    (javafx.scene.layout.BorderPane/setAlignment button javafx.geometry.Pos/CENTER)
-
-    (stage bp)))
+(defn round-to-nearest
+  "Returns x rounded to nearest y"
+  [^double x, ^double y]
+  (* y (Math/round (/ x y))))
 
 (defn long-slider [slider]
   (let [cl (change-listener [oldval newval]
@@ -1328,7 +1374,21 @@ No need to provide 'this' argument as the macro does this."
 
 
 
+(defn -main [& args]
+  ;; In repl, auto-termination is automatically disabled.
+  ;; When not in repl (lein run, java -jar jfxutils.jar, etc)
+  ;; the auto-termination must be disabled by the application.
+  (app-init)
+  (println "I'm a library.  Don't run me.")
+  
+  (let [button (jfxnew javafx.scene.control.Button "Okay"
+                       :on-action (javafx.application.Platform/exit))
+        bp (jfxnew javafx.scene.layout.BorderPane
+                   :center (javafx.scene.text.Text. "I'm a library.\nDon't run me")
+                   :bottom button)]
+    (javafx.scene.layout.BorderPane/setAlignment button javafx.geometry.Pos/CENTER)
 
+    (stage bp)))
 
 
 
