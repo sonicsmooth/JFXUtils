@@ -909,30 +909,22 @@ No need to provide 'this' argument as the macro does this."
      exp-val#))
 
 (defn keydiff
-  "Returns true if any of new-map's values are different from
-  old-map's, using keys to access, nil otherwise.  If keys is nested
-  map, then uses get-in."
+  "Returns false if all of new-map's values are the same as old-map's,
+  using keys to access.  Returns value of last key in new-map
+  otherwise.  If keys is nested map, then uses get-in."
   [old-map new-map keys]
   (let [mapfn (fn [k]
                 (if (vector? k)
-                  (not= (get-in old-map k) (get-in new-map k))
-                  (not= (get    old-map k) (get    new-map k))))]
-    (some identity (map mapfn keys))))
+                  (let [nv (get-in new-map k)]
+                    (if (= (get-in old-map k) nv) nil nv))
+                  (let [nv (k new-map)]
+                    (if (= (k old-map) nv) nil nv))))]
+    (->> keys
+         (map mapfn)
+         (filter some?)
+         seq
+         last)))
 
-#_(defn uni-bind!
-  ;; Create a one-way binding from Property to var via a
-  ;; ChangeListener on the JFX Property.  This is used for
-  ;; implementing the observer pattern.  The Property is associated
-  ;; with a specific nested sub-element of the atom/ref map.
-
-  ;; old comments: prop is the UI property. var is the atom/ref in
-  ;; question. full-accesspath is a vector of arguments to assoc-in or
-  ;; update-in or get-in. This does NOT add a watch on the var.  If
-  ;; extra-fn is provided, it is executed after updating the var.
-  [prop actionfn & [extra-fn]]
-  (.addListener ^Node prop (change-listener [oldval newval]
-                           (actionfn newval)
-                           (when extra-fn (extra-fn)))))
 
 (defn showstack
   ([]
@@ -1355,21 +1347,30 @@ No need to provide 'this' argument as the macro does this."
 
 (defn round-to-nearest
   "Returns x rounded to nearest y"
-  [^double x, ^double y]
-  (* y (Math/round (/ x y))))
+  (^double [^double x, ^double y]
+   (* y (Math/round (/ x y)))))
 
-(defn long-slider [slider]
-  (let [cl (change-listener [oldval newval]
-                            (.set observable (Math/round newval)))]
-    (add-listener! slider :value cl))
-  slider)
+(defn long-slider
+  ([slider]
+   (long-slider slider 1))
+  ([slider snap]
+   (add-listener! slider :value
+                  (change-listener [oldval newval]
+                                   (.set observable (round-to-nearest
+                                                     (long newval)
+                                                     (long snap)))))
+   slider))
 
-(defn double-slider [slider snap]
-  (let [cl (change-listener [oldval newval]
-                            (let [q (Math/round (/ newval snap))]
-                              (.set observable (* q snap))))]
-    (add-listener! slider :value cl))
-  slider)
+(defn double-slider
+  ([slider]
+   (double-slider slider 1.0))
+  ([slider snap]
+   (add-listener! slider :value
+                  (change-listener [oldval newval]
+                                   (.set observable (round-to-nearest
+                                                     (double newval)
+                                                     (double snap)))))
+   slider))
 
 
 
