@@ -1350,6 +1350,26 @@ No need to provide 'this' argument as the macro does this."
   (^double [^double x, ^double y]
    (* y (Math/round (/ x y)))))
 
+(defn snap-to-half
+  "Returns x snapped to nearest 0.5.  Used for pixel calculations.
+With one argument, it must be either a Point2D or a double, in which
+  case the same is returned.  With two arguments, they must be a
+  double, and a Point2D is returned."
+  ([arg]
+   (cond (instance? javafx.geometry.Point2D arg)
+         (javafx.geometry.Point2D.
+          (+ 0.5 (Math/floor (.getX arg)))
+          (+ 0.5 (Math/floor (.getY arg))))
+         
+         (instance? Double arg)
+         (+ 0.5 (Math/floor arg))
+
+         :else (throw (java.lang.IllegalArgumentException. "You must pass a Point2D, a double, or two doubles to snap-to-half"))))
+  (^javafx.geometry.Point2D  [^double x, ^double y]
+   (javafx.geometry.Point2D.
+    (+ 0.5 (Math/floor x))
+    (+ 0.5 (Math/floor y)))))
+
 (defn long-slider
   ([slider]
    (long-slider slider 1))
