@@ -1,5 +1,5 @@
 (ns jfxutils.core
-  (:require [clojure.string  :refer [capitalize join split]]
+  (:require [clojure.string :refer [capitalize join split]]
             [clojure.java.io :refer [resource]]
             [clojure.pprint :refer [pprint print-table]]
             [clojure.reflect :refer [reflect]]
@@ -123,18 +123,10 @@
       (.start @sleeper)
       jfxpanel)))
 
-(when (and (debug?) init-toolkit?)
+(when (and (debug?) (init-toolkit?))
   (println "Toolkit init due to init-toolkit=true"))
 
-#_(when (and (debug?) (not *compile-files*))
-  (println "Toolkit init due to not compiling"))
-
-#_(when (and (debug?) *compile-files*)
-  (println "Compiling files"))
-
-(if (or (init-toolkit?)
-    ;;    (not *compile-files*)
-        )
+(if (init-toolkit?)
   (do
     (app-init)
     (set-exit (implicit-exit?)))
@@ -382,6 +374,15 @@
     (clojure.lang.Reflector/invokeInstanceMethod
      obj methodname (into-array [value]))))
 
+(defn set-prop-val-from-symbol!
+  "Sets property value to value.  property arg is symbol whose name is
+  exactly the jfx property.  Uses reflection."
+  [obj prop value]
+  (let [propstr (name prop)
+        methodname (str "set" (.toUpperCase (subs propstr 0 1)) (subs propstr 1))]
+    (clojure.lang.Reflector/invokeInstanceMethod
+     obj methodname (into-array [value]))))
+
 (defmacro get-prop-val*
   "Gets property value.  property arg must be keyword literal."
   [obj prop]
@@ -486,17 +487,6 @@
   [allkeys sort-order]
   (let [reduced-list (remove #(contains? (set sort-order) %) allkeys)]
     (concat sort-order reduced-list)))
-
-#_(defn xmembers
-    "Returns members of object based on flags.  See print-members."
-    [obj & flags]
-    (let [members1 (:members (clojure.reflect/reflect obj))
-          members2 (map #(dissoc % :declaring-class) members1)
-          members3 (if flags
-                     (filter #(all-in? (:flags %) (set flags)) members2)
-                     members2)
-          members4 (sort-by :name members3)]
-      members4))
 
 (defn members
   "Returns members of object based on flags.  See print-members."
@@ -637,13 +627,7 @@
                      ctor-args)
         var-arg (when (and var-ctor? (sequential? (last ctor-args)))
                   (last ctor-args))
-        #_var-arg #_(if var-ctor?
-                  (if (sequential? (last ctor-args))
-                    (last ctor-args)
-                    nil)
-                  nil)
         kvps (partition 2 kvpseq)]
-    ;; ~@ctor-args
     (if var-arg
       `(doto (new ~klass ~@static-arg (into-array (find-common-parent ~@var-arg) ~var-arg))
          ~@(accum-kvps* kvps))
@@ -1352,7 +1336,7 @@ No need to provide 'this' argument as the macro does this."
 
 (defn snap-to-half
   "Returns x snapped to nearest 0.5.  Used for pixel calculations.
-With one argument, it must be either a Point2D or a double, in which
+  With one argument, it must be either a Point2D or a double, in which
   case the same is returned.  With two arguments, they must be a
   double, and a Point2D is returned."
   ([arg]
