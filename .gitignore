@@ -1,0 +1,11 @@
+pom.xml*
+*.jar
+*.class
+/lib/
+/classes/
+/target/
+/checkouts/
+.lein-*
+#*
+
+
