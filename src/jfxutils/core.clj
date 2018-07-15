@@ -1376,7 +1376,29 @@ No need to provide 'this' argument as the macro does this."
                                                      (double snap)))))
    slider))
 
-
+(defn make-simple-dispatch
+  "Return new simple-dispatch fn for given class"
+  [klass klass-str]
+  (fn [c]
+    (let [amap (into {} c)]
+      (if clojure.core/*print-dup*
+        (.write ^java.io.Writer *out* klass-str)
+        (.write ^java.io.Writer *out* (pr-str klass)))
+      (clojure.pprint/pprint-logical-block
+       :prefix "{" :suffix "}"
+       (clojure.pprint/print-length-loop
+        [aseq (seq amap)]
+        (when aseq
+          (clojure.pprint/pprint-logical-block
+           (clojure.pprint/write-out (ffirst aseq))
+           (.write ^java.io.Writer *out* " ")
+           (clojure.pprint/pprint-newline :linear)
+           ;;(set! clojure.pprint/*current-length* 0) ; always print both parts of the [k v] pair
+           (clojure.pprint/write-out (fnext (first aseq))))
+          (when (next aseq)
+            (.write ^java.io.Writer *out* ", ")
+            (clojure.pprint/pprint-newline :linear)
+            (recur (next aseq)))))))))
 
 
 (defn -main [& args]
