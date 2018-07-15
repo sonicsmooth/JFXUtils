@@ -63,8 +63,9 @@
   [exit?]
   ;;(println "Implicit exit set to:" exit?)
   (javafx.application.Platform/setImplicitExit exit?)
-  (de.codecentric.centerdevice.javafxsvg.SvgImageLoaderFactory/install)) ;; allows us to use SVG files in JavaFX
-
+  ;;(de.codecentric.centerdevice.javafxsvg.SvgImageLoaderFactory/install) ;; allows us to use SVG files in JavaFX
+)
+  
 (when (debug?)
   (println "jvm-opt init-toolkit:" (init-toolkit?))
   (println "jvm-opt auto-terminate:" (auto-terminate?))
